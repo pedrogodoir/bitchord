@@ -1,6 +1,17 @@
-// Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-fn main() {
-    bitchord_lib::run()
+
+mod discovery;
+
+fn main() -> std::io::Result<()> {
+
+    std::thread::spawn(|| {
+        if let Err(e) = discovery::main() {
+            eprintln!("Erro na descoberta de rede: {}", e);
+        }
+    });
+
+    
+    bitchord_lib::run();
+    Ok(())
 }
