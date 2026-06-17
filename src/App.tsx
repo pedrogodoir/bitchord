@@ -1,9 +1,11 @@
 import { useState } from "react";
-import reactLogo from "./assets/react.svg";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from '@tauri-apps/plugin-dialog';
 import "./App.css";
 
+
 function App() {
+
   const [greetMsg, setGreetMsg] = useState("");
   const [name, setName] = useState("");
 
@@ -16,7 +18,7 @@ function App() {
     <main className="container">
       <h1>Welcome to Tauri + React</h1>
 
-      <div className="row">
+      {/* <div className="row">
         <a href="https://vite.dev" target="_blank">
           <img src="/vite.svg" className="logo vite" alt="Vite logo" />
         </a>
@@ -27,9 +29,9 @@ function App() {
           <img src={reactLogo} className="logo react" alt="React logo" />
         </a>
       </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
+      <p>Click on the Tauri, Vite, and React logos to learn more.</p> */}
 
-      <form
+      {/* <form
         className="row"
         onSubmit={(e) => {
           e.preventDefault();
@@ -42,8 +44,22 @@ function App() {
           placeholder="Enter a name..."
         />
         <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
+      </form> */}
+      {/* <p>{greetMsg}</p> */}
+      <div>
+        <button id="upload-file" type="button" onClick={async ()=>{
+          const file =await open({
+            multiple: false,
+            directory: false,
+          });
+          console.log(file);
+
+          await invoke('upload_file',{file});
+           }}>
+
+            Upload file
+        </button>
+      </div>
     </main>
   );
 }
