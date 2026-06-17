@@ -3,7 +3,7 @@ use std::thread;
 use std::time::Duration;
 use std::sync::{Arc, Mutex};
 use crate::node::Node;
-use crate::network::{start_server, stabilize, fix_fingers, send_message}; // Importa o que estava esquecido!
+use crate::network::{start_server, stabilize, fix_fingers, send_message}; 
 use sha1::{Digest, Sha1};
 use crate::message::Message;
 
@@ -11,7 +11,8 @@ const MULTICAST_IP: Ipv4Addr = Ipv4Addr::new(239, 255, 0, 1);
 const PORT: u16 = 5000;
 
 pub fn main() -> std::io::Result<Arc<Mutex<Node>>> {
-    let node = find_node()?;
+    let my_ip = get_local_ip().unwrap_or_else(|| "127.0.0.1".to_string());
+    let node = find_node(&my_ip)?;
 
     let node_tcp = Arc::clone(&node);
     let node_bg = Arc::clone(&node);
@@ -36,8 +37,8 @@ pub fn main() -> std::io::Result<Arc<Mutex<Node>>> {
       }
     });
 
-    thread::spawn(|| {
-        if let Err(e) = listen_mult() {
+    thread::spawn(move || {
+        if let Err(e) = listen_mult(&my_ip) {
             eprintln!("Erro no listener multicast: {}", e);
         }
     });
@@ -64,17 +65,16 @@ pub fn generate_id_from_ip(ip: &str) -> u8 {
     result[0]
 }
 
-pub fn find_node() -> std::io::Result<Arc<Mutex<Node>>> {
-
-    let socket = UdpSocket::bind("0.0.0.0:0")?;
+pub fn find_node(my_ip: &str) -> std::io::Result<Arc<Mutex<Node>>> {
+    // usamos o IP local para garantir que a resposta venha pela mesma interface
+    let socket = UdpSocket::bind(format!("{}:0", my_ip))?;
     
     socket.set_read_timeout(Some(Duration::from_secs(5)))?;
 
     let msg = b"PING_CHORD_JOIN";
     let dest_addr = format!("{}:{}", MULTICAST_IP, PORT);
 
-    let my_ip = crate::discovery::get_local_ip().unwrap_or_else(|| "127.0.0.1".to_string());
-    let my_id = crate::discovery::generate_id_from_ip(&my_ip);
+    let my_id = crate::discovery::generate_id_from_ip(my_ip);
     let my_tcp_addr = format!("{}:8000", my_ip);
     
     println!("Enviando ping multicast para descobrir nós...");
@@ -94,7 +94,7 @@ pub fn find_node() -> std::io::Result<Arc<Mutex<Node>>> {
             if let Message::SuccessorResponse { node: succ } = send_message(&contact_tcp_addr, &Message::FindSuccessor { id: my_id }) {
                 println!("[FINDER] O meu sucessor correto no anel será o Nó {}", succ.id);
                 let mut node_lock = node.lock().unwrap();
-                node_lock.successor = succ; // Atualizamos o nosso sucessor real!
+                node_lock.successor = succ; // update node successor
             }
 
             Ok(node)
@@ -111,20 +111,22 @@ pub fn find_node() -> std::io::Result<Arc<Mutex<Node>>> {
 }
 
 // Nó já existente fica ouvindo esperando algum nó novo
-pub fn listen_mult() -> std::io::Result<()> {
-    let local_addr = Ipv4Addr::new(0, 0, 0, 0);
-    let socket = UdpSocket::bind(format!("{}:{}", local_addr, PORT))?;
+pub fn listen_mult(my_ip: &str) -> std::io::Result<()> {
+    let socket = UdpSocket::bind(format!("0.0.0.0:{}", PORT))?;
     
-    socket.join_multicast_v4(&MULTICAST_IP, &local_addr)?;
+    let local_ip: Ipv4Addr = my_ip.parse().unwrap_or(Ipv4Addr::new(127, 0, 0, 1));
+    
+    socket.join_multicast_v4(&MULTICAST_IP, &local_ip)?;
 
-    println!("[LISTENER] Escutando pedidos de entrada em {}:{}", MULTICAST_IP, PORT);
+    println!("[LISTENER] Escutando pedidos na placa {}", local_ip);
 
     let mut buf = [0; 1024];
     loop {
         let (len, src) = socket.recv_from(&mut buf)?;
         let msg = String::from_utf8_lossy(&buf[..len]);
         
-        if msg == "PING_CHORD_JOIN" {
+        // ignore messages from itself
+        if msg == "PING_CHORD_JOIN" && src.ip() != local_ip {
             println!("[LISTENER] Recebi pedido de entrada de {}", src);
             let reply = b"HELLO_I_AM_CONTACT_NODE";
             socket.send_to(reply, src)?;
