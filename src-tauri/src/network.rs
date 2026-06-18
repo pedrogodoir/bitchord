@@ -44,7 +44,7 @@ fn handle_connection(mut stream: TcpStream, node: Arc<Mutex<Node>>) {
             Ok(msg) => msg,
             Err(_) => return,
         };
-        println!("[NETWORK] Mensagem recebida: {:?}", message);
+        // println!("[NETWORK] Mensagem recebida: {:?}", message);
 
         let response = match message {
             Message::Ping => Message::Pong,
@@ -80,7 +80,7 @@ fn handle_connection(mut stream: TcpStream, node: Arc<Mutex<Node>>) {
         };
 
         let serialized = serde_json::to_vec(&response).unwrap();
-        println!("[NETWORK] Respondendo: {:?}", response);
+        // println!("[NETWORK] Respondendo: {:?}", response);
         let _ = stream.write_all(&serialized);
     }
 }
@@ -88,14 +88,14 @@ fn handle_connection(mut stream: TcpStream, node: Arc<Mutex<Node>>) {
 pub fn send_message(address: &str, message: &Message) -> Message {
     match TcpStream::connect(address) {
         Ok(mut stream) => {
-            println!("[NETWORK] Conectando em {} para enviar {:?}", address, message);
+            // println!("[NETWORK] Conectando em {} para enviar {:?}", address, message);
             let payload = serde_json::to_vec(message).unwrap();
             let _ = stream.write_all(&payload);
 
             let mut buffer = [0; 4096];
             if let Ok(size) = stream.read(&mut buffer) {
                 if size > 0 {
-                    println!("[NETWORK] Recebido resposta de {}: {} bytes", address, size);
+                    // println!("[NETWORK] Recebido resposta de {}: {} bytes", address, size);
                     return serde_json::from_slice(&buffer[..size]).unwrap_or(Message::Ack);
                 }
             }
@@ -111,7 +111,7 @@ pub fn find_successor_rpc(node_arc: Arc<Mutex<Node>>, id: u8) -> NodeInfo {
         let node = node_arc.lock().unwrap();
         (node.id, node.successor.clone())
     };
-    println!("[FIND] Procurando sucessor para id={} (meu id={})", id, self_id);
+    // println!("[FIND] Procurando sucessor para id={} (meu id={})", id, self_id);
 
     // Se o id está entre mim e meu sucessor, o responsável é o meu sucessor!
     if is_between(id, self_id, succ.id, true) {
@@ -132,7 +132,7 @@ pub fn find_successor_rpc(node_arc: Arc<Mutex<Node>>, id: u8) -> NodeInfo {
     };
 
     if closest.id == self_id {
-        println!("[FIND] Closest é eu mesmo; retornando sucessor local id={}", succ.id);
+        // println!("[FIND] Closest é eu mesmo; retornando sucessor local id={}", succ.id);
         return succ;
     }
 
@@ -149,7 +149,7 @@ pub fn stabilize(node_arc: Arc<Mutex<Node>>) {
         let node = node_arc.lock().unwrap();
         node.successor.address.clone() // <-- Removido o self_id que não estava sendo usado aqui
     };
-    println!("[STABILIZE] Perguntando predecessor do sucessor em {}", succ_address);
+    // println!("[STABILIZE] Perguntando predecessor do sucessor em {}", succ_address);
 
     // Pergunta ao sucessor quem é o predecessor dele
     let response = send_message(&succ_address, &Message::GetPredecessor);
@@ -166,7 +166,7 @@ pub fn stabilize(node_arc: Arc<Mutex<Node>>) {
         let node = node_arc.lock().unwrap();
         (node.successor.address.clone(), node.info.clone())
     };
-    println!("[STABILIZE] Notificando sucessor {} sobre mim (id={})", succ_address, self_info.id);
+    // println!("[STABILIZE] Notificando sucessor {} sobre mim (id={})", succ_address, self_info.id);
     send_message(&succ_address, &Message::Notify { node: self_info });
 }
 
@@ -178,14 +178,14 @@ pub fn fix_fingers(node_arc: Arc<Mutex<Node>>) {
         node.next_finger = (node.next_finger + 1) % 8; // Anel de tamanho 8 bits (0-255)
         node.next_finger
     };
-    println!("[FIX] Atualizando finger index {}", next);
+    // println!("[FIX] Atualizando finger index {}", next);
 
     let self_id = node_arc.lock().unwrap().id;
     // Cálculo do artigo: (n + 2^i) mod 256
     let target = self_id.wrapping_add(2u8.pow(next as u32));
 
     let succ = find_successor_rpc(node_arc.clone(), target);
-    println!("[FIX] Sucessor para target {} é id={}", target, succ.id);
+    // println!("[FIX] Sucessor para target {} é id={}", target, succ.id);
 
     let mut node = node_arc.lock().unwrap();
     if node.fingers.len() <= next {
