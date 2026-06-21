@@ -134,3 +134,60 @@ pub fn listen_mult(my_ip: &str) -> std::io::Result<()> {
         }
     }
 }
+
+/// Envia um ping multicast e retorna o endereço TCP do nó de contato encontrado
+fn discover_contact_node(bind_ip: &str, timeout_secs: u64) -> std::io::Result<String> {
+    let socket = UdpSocket::bind(format!("{}:0", bind_ip))?;
+    socket.set_read_timeout(Some(Duration::from_secs(timeout_secs)))?;
+
+    // Usamos a mesma mensagem exata que o listen_mult espera
+    let msg = b"PING_CHORD_JOIN"; 
+    let dest_addr = format!("{}:{}", MULTICAST_IP, PORT);
+
+    socket.send_to(msg, &dest_addr)?;
+
+    let mut buf = [0; 1024];
+    let (_, src) = socket.recv_from(&mut buf)?;
+    
+    // Formata e retorna o IP de quem respondeu com a porta TCP padrão (8000)
+    let contact_tcp_addr = format!("{}:8000", src.ip());
+    
+    Ok(contact_tcp_addr)
+}
+
+pub fn rejoin_ring(node_arc: Arc<Mutex<Node>>) -> std::io::Result<()> {
+    let my_id = {
+        let node = node_arc.lock().unwrap();
+        node.id
+    };
+
+    println!("\n[RE-ENTRY] A enviar ping multicast para reencontrar a rede...");
+    
+    // Usamos "0.0.0.0" para ouvir em todas as interfaces, com 3 segundos de timeout
+    match discover_contact_node("0.0.0.0", 3) {
+        Ok(contact_tcp_addr) => {
+            println!("[RE-ENTRY] Nó de contacto encontrado em: {}", contact_tcp_addr);
+
+            // Pergunta ao nó de contato quem deve ser o nosso sucessor
+            if let Message::SuccessorResponse { node: succ } = send_message(&contact_tcp_addr, &Message::FindSuccessor { id: my_id }) {
+                println!("[RE-ENTRY] Reconectado! O novo sucessor é o Nó {}", succ.id);
+                
+                let mut node_lock = node_arc.lock().unwrap();
+                node_lock.successor = succ;
+                node_lock.predecessor = None;
+            }
+        }
+        Err(_) => {
+            println!("[RE-ENTRY] Ninguém respondeu. A assumir como anel solitário novamente.");
+            
+            let mut node_lock = node_arc.lock().unwrap();
+            let self_info = node_lock.info.clone();
+            
+            // Fica sozinho no anel: aponta para si mesmo e zera o predecessor
+            node_lock.successor = self_info;
+            node_lock.predecessor = None;
+        }
+    }
+
+    Ok(())
+}

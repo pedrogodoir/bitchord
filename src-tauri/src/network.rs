@@ -61,6 +61,8 @@ fn handle_connection(mut stream: TcpStream, node: Arc<Mutex<Node>>) {
                 }
             }
 
+            
+
             Message::Notify { node: n_prime } => {
                 let mut node_lock = node.lock().unwrap();
                 // n' pensa que é nosso predecessor (Algoritmo da seção 4.3)
@@ -74,6 +76,19 @@ fn handle_connection(mut stream: TcpStream, node: Arc<Mutex<Node>>) {
                 {
                     node_lock.predecessor = Some(n_prime);
                 }
+                Message::Ack
+            }
+
+            Message::UpdateSuccessor { node: new_succ } => {
+                println!("[LEAVE] Meu sucessor saiu! Meu novo sucessor agora é o ID {}", new_succ.id);
+                let mut n = node.lock().unwrap();
+                n.successor = new_succ;
+                Message::Ack
+            }
+            Message::UpdatePredecessor { node: new_pred } => {
+                println!("[LEAVE] Meu predecessor saiu! Meu novo predecessor foi atualizado.");
+                let mut n = node.lock().unwrap();
+                n.predecessor = new_pred;
                 Message::Ack
             }
             _ => Message::Ack,
@@ -194,4 +209,30 @@ pub fn fix_fingers(node_arc: Arc<Mutex<Node>>) {
         node.fingers.resize(8, default_info);
     }
     node.fingers[next] = succ;
+}
+
+pub fn leave_ring(node_arc: Arc<Mutex<Node>>) {
+    let (my_info, pred_opt, succ) = {
+        let node = node_arc.lock().unwrap();
+        (node.info.clone(), node.predecessor.clone(), node.successor.clone())
+    };
+
+    // Se eu não estava sozinho no anel, costura as pontas avisando os vizinhos
+    if succ.id != my_info.id {
+        println!("[LEAVE] Informando vizinhos sobre a desconexão...");
+        
+        // 1. Avisa o Predecessor para pular diretamente para o meu Sucessor
+        if let Some(pred) = pred_opt.clone() {
+            let _ = send_message(&pred.address, &Message::UpdateSuccessor { node: succ.clone() });
+        }
+
+        // 2. Avisa o Sucessor para olhar para o meu Predecessor
+        let _ = send_message(&succ.address, &Message::UpdatePredecessor { node: pred_opt });
+    }
+
+    // AGORA O PULO DO GATO: Atualiza o próprio estado para isolado (standalone)
+    let mut node = node_arc.lock().unwrap();
+    node.successor = node.info.clone(); // Aponta o sucessor para si mesmo
+    node.predecessor = None;            // Limpa o predecessor
+    println!("[LEAVE] Desconexão concluída. O nó agora está isolado.");
 }

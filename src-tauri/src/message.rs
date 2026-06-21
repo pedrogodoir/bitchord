@@ -11,4 +11,6 @@ pub enum Message {
     PredecessorResponse { node: Option<NodeInfo> },
     Notify { node: NodeInfo },
     Ack,
+    UpdateSuccessor { node: NodeInfo },
+    UpdatePredecessor { node: Option<NodeInfo> },
 }

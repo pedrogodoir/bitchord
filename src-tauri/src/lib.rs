@@ -2,6 +2,7 @@ pub mod discovery;
 pub mod node;
 pub mod network;
 pub mod message;
+mod torrent;
 
 use std::sync::{Arc, Mutex};
 use serde::Serialize;
@@ -31,6 +32,28 @@ fn get_node_info(state: tauri::State<'_, Arc<Mutex<Node>>>) -> Result<NodeView, 
     })
 }
 
+#[tauri::command]
+fn leave_network(state: tauri::State<'_, Arc<Mutex<Node>>>) -> Result<(), String> {
+    println!("\n[SISTEMA] Comando de desligamento recebido do Front-end!");
+    
+    // Dispara a lógica de avisar os vizinhos
+    crate::network::leave_ring(state.inner().clone());
+    
+    // Encerra completamente o aplicativo Tauri e os processos em background
+    println!("[SISTEMA] Encerrando aplicação...");
+    Ok(())
+}
+
+#[tauri::command]
+fn join_network(state: tauri::State<'_, Arc<Mutex<Node>>>) -> Result<(), String> {
+    println!("\n[SISTEMA] Comando de ligação recebido do Front-end!");
+    
+    // Dispara a lógica de re-entrada no anel
+    crate::discovery::rejoin_ring(state.inner().clone()).map_err(|e| e.to_string())?;
+    
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     println!("Iniciando protocolo Chord...");
@@ -45,7 +68,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(chord_node)
-        .invoke_handler(tauri::generate_handler![get_node_info])
+        .invoke_handler(tauri::generate_handler![get_node_info, leave_network, join_network, torrent::upload_file])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
