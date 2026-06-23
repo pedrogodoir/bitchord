@@ -3,10 +3,6 @@ use sha1::{Digest, Sha1};
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
-use crate::node::Node;
-use crate::network::{find_successor_rpc, send_message};
-use crate::message::Message;
-
 // Definindo o tamanho do pedaço (ex: 256 KB)
 pub const CHUNK_SIZE: usize = 256 * 1024; 
 
@@ -38,8 +34,6 @@ pub fn create_torrent_meta(file_path: &str, file_name: &str) -> std::io::Result<
         let hash_result = hex::encode(hasher.finalize());
 
         chunk_hashes.push(hash_result);
-
-
     }
 
 
