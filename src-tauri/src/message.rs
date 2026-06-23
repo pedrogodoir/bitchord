@@ -11,4 +11,5 @@ pub enum Message {
     PredecessorResponse { node: Option<NodeInfo> },
     Notify { node: NodeInfo },
     Ack,
+    PublishFile { file_id: u8, file_hash: String, owner_address: String },
 }

@@ -3,6 +3,9 @@ use sha1::{Digest, Sha1};
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
+use crate::node::Node;
+use crate::network::{find_successor_rpc, send_message};
+use crate::message::Message;
 
 // Definindo o tamanho do pedaço (ex: 256 KB)
 pub const CHUNK_SIZE: usize = 256 * 1024; 
@@ -12,6 +15,7 @@ pub struct TorrentMeta {
     pub file_name: String,
     pub total_size: u64,
     pub file_hash: String,         // O SHA-1 do nome do arquivo (A chave que vai pro Chord)
+    pub routing_id: u8,            // A chave (0-255) que vai pro Chord
     pub chunk_hashes: Vec<String>, // Lista com o SHA-1 de cada pedaço de 256KB
 }
 
@@ -38,14 +42,20 @@ pub fn create_torrent_meta(file_path: &str, file_name: &str) -> std::io::Result<
 
     }
 
+
     let mut name_hasher = Sha1::new();
     name_hasher.update(file_name.as_bytes());
-    let file_hash = hex::encode(name_hasher.finalize());
+    
+    let finalized_hash = name_hasher.finalize(); 
+
+    let file_hash = hex::encode(finalized_hash); // Hexadecimal string
+    let routing_id = finalized_hash[0];          // extract first byte (0-255)
 
     Ok(TorrentMeta {
         file_name: file_name.to_string(),
         total_size,
         file_hash,
+        routing_id,
         chunk_hashes,
     })
 }
@@ -71,7 +81,6 @@ pub fn upload_file(file: String) -> Result<(), String> {
             
             // TODO:Lógica de publicar no chord.
             // Fluxo no excalidraw...
-
             Ok(())
         }
         Err(e) => {

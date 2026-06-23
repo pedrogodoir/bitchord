@@ -76,7 +76,28 @@ fn handle_connection(mut stream: TcpStream, node: Arc<Mutex<Node>>) {
                 }
                 Message::Ack
             }
+
+            Message::PublishFile { file_id, file_hash, owner_address } => {
+                println!("[TRACKER] Guardando arquivo {} (Chave {}) do dono {}", file_hash, file_id, owner_address);
+                
+                let mut node_lock = node.lock().unwrap();
+                
+                // Pega a lista de IPs que têm esse arquivo (ou cria uma lista nova se for o primeiro)
+                let entry = node_lock.tracker_data.entry(file_hash).or_insert_with(Vec::new);
+                
+                // Tenta adicionar ip na lista
+                if !entry.contains(&owner_address) {
+                    entry.push(owner_address);
+                }
+                
+                Message::Ack 
+            }
+
             _ => Message::Ack,
+
+
+
+
         };
 
         let serialized = serde_json::to_vec(&response).unwrap();
