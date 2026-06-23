@@ -112,21 +112,23 @@ export default function ChordDashboard() {
     </div>
   );
 
-  const knownMembers = [
-    {
+const knownMembers = [];
+
+  if (node.successor_id !== node.id) {
+    knownMembers.push({
       role: "Sucessor",
       id: node.successor_id,
       address: node.successor_address,
-    }
-  ];
+    });
+  }
 
   if (node.predecessor_id !== null && node.predecessor_address !== null) {
-    if (node.predecessor_id !== node.successor_id) {
-       knownMembers.push({
-         role: "Predecessor",
-         id: node.predecessor_id,
-         address: node.predecessor_address,
-       });
+    if (node.predecessor_id !== node.id && node.predecessor_id !== node.successor_id) {
+      knownMembers.push({
+        role: "Predecessor",
+        id: node.predecessor_id,
+        address: node.predecessor_address,
+      });
     }
   }
 
