@@ -5,14 +5,18 @@ use std::io::Read;
 use std::path::Path;
 // Definindo o tamanho do pedaço (ex: 256 KB)
 pub const CHUNK_SIZE: usize = 256 * 1024; 
-
-#[derive(Clone, Debug, serde::Serialize)] 
+use std::sync::{Arc, Mutex};
+use crate::node::Node;
+use crate::network::send_message;
+use crate::message::Message;
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct TorrentMeta {
     pub file_name: String,
     pub total_size: u64,
     pub file_hash: String,         // O SHA-1 do nome do arquivo (A chave que vai pro Chord)
     pub routing_id: u8,            // A chave (0-255) que vai pro Chord
     pub chunk_hashes: Vec<String>, // Lista com o SHA-1 de cada pedaço de 256KB
+    pub seeders: Vec<String>,
 }
 
 pub fn create_torrent_meta(file_path: &str, file_name: &str) -> std::io::Result<TorrentMeta> {
@@ -51,6 +55,7 @@ pub fn create_torrent_meta(file_path: &str, file_name: &str) -> std::io::Result<
         file_hash,
         routing_id,
         chunk_hashes,
+        seeders: Vec::new(),
     })
 }
 
@@ -64,7 +69,7 @@ pub fn upload_file(file: String, state: tauri::State<'_, std::sync::Arc<std::syn
         .unwrap_or("arquivo_desconhecido");
 
     match create_torrent_meta(&file, file_name) {
-        Ok(meta) => {
+        Ok(mut meta) => {
             println!("[TORRENT] Metadados gerados com sucesso!");
             println!("  Hash Completo: {}", meta.file_hash);
             
@@ -75,11 +80,20 @@ pub fn upload_file(file: String, state: tauri::State<'_, std::sync::Arc<std::syn
             
             println!("[TORRENT] ID de busca gerado para o anel Chord: {}", key_id);
 
-            // 2. BUSCA DISTRIBUÍDA: Encontra o nó responsável por este ID no anel
+            // 2. BUSCA DISTRIBUÍDA: Encontra o nó responsável
             let node_arc = state.inner().clone();
             println!("[TORRENT] Roteando busca pelo nó responsável no anel...");
-            let target_node = crate::network::find_successor_rpc(node_arc, key_id);
+            let target_node = crate::network::find_successor_rpc(node_arc.clone(), key_id);
             println!("[TORRENT] Nó responsável encontrado: ID {} no endereço {}", target_node.id, target_node.address);
+
+
+            // Pega o IP do nó e adiciona na lista de seeders
+            let my_address = {
+                let n = node_arc.lock().unwrap();
+                n.info.address.clone()
+            };
+            meta.seeders.push(my_address);
+           
 
             // 3. SERIALIZAÇÃO: Converte a struct TorrentMeta para uma String JSON
             let serialized_meta = serde_json::to_string(&meta)
@@ -106,4 +120,59 @@ pub fn upload_file(file: String, state: tauri::State<'_, std::sync::Arc<std::syn
             Err(erro_msg)
         }
     }
+}
+
+#[tauri::command]
+pub fn get_all_files_network(state: tauri::State<'_, Arc<Mutex<Node>>>) -> Result<Vec<TorrentMeta>, String> {
+    println!("[TORRENT] Iniciando varredura global de arquivos...");
+
+    let (my_id, succ_addr, mut my_files) = {
+        let n = state.inner().lock().unwrap();
+        
+        let mut local_files: Vec<String> = Vec::new(); 
+        
+        for val in n.storage.values() {
+            local_files.push(val.clone());
+        }
+        
+        (n.id, n.successor.address.clone(), local_files)
+    };
+
+    let mut all_files_json: Vec<String> = Vec::new(); 
+
+    let is_alone = {
+        let n = state.inner().lock().unwrap();
+        n.id == n.successor.id
+    };
+
+    if is_alone {
+        println!("[TORRENT] Estou sozinho no anel. Retornando apenas arquivos locais.");
+        all_files_json = my_files;
+    } else {
+        // manda para o sucessor
+        let msg = Message::GetAllFiles {
+            origin_id: my_id,
+            files: my_files, // manda com os arquivos
+        };
+
+        match send_message(&succ_addr, &msg) {
+            Message::AllFilesResponse { files } => {
+                all_files_json = files;
+            }
+            _ => {
+                return Err("Falha ao completar a varredura na rede.".to_string());
+            }
+        }
+    }
+
+    // Converte as Strings JSON de volta para Structs para o Tauri mandar pro Frontend
+    let mut parsed_files = Vec::new();
+    for json_str in all_files_json {
+        if let Ok(meta) = serde_json::from_str::<TorrentMeta>(&json_str) {
+            parsed_files.push(meta);
+        }
+    }
+
+    println!("[TORRENT] Varredura completa! {} arquivos encontrados.", parsed_files.len());
+    Ok(parsed_files)
 }

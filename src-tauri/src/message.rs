@@ -17,4 +17,6 @@ pub enum Message {
     PutData { key_id: u8, file_hash: String, value: String },
     GetData { key_id: u8, file_hash: String },
     DataResponse { value: Option<String> },
+    GetAllFiles { origin_id: u8, files: Vec<String> }, 
+    AllFilesResponse { files: Vec<String> },
 }

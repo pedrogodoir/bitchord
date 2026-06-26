@@ -105,6 +105,34 @@ fn handle_connection(mut stream: TcpStream, node: Arc<Mutex<Node>>) {
                 n.predecessor = new_pred;
                 Message::Ack
             }
+            Message::GetAllFiles { origin_id, mut files } => {
+                let (my_id, succ_addr) = {
+                    let n = node.lock().unwrap();
+                    
+                    // Coloca todos os arquivos deste nó 
+                    for val in n.storage.values() {
+                        files.push(val.clone());
+                    }
+                    (n.id, n.successor.address.clone())
+                };
+
+                // Se deu a volta completa e voltou
+                if my_id == origin_id {
+                    println!("[SEARCH] A varredura deu a volta completa no anel");
+                    Message::AllFilesResponse { files }
+                } else {
+                    // Se não sou eu o dono da busca, passo a caixa pro meu sucessor
+                    println!("[SEARCH] Nó {} adicionou seus arquivos e passou para o sucessor", my_id);
+                    match send_message(&succ_addr, &Message::GetAllFiles { origin_id, files }) {
+                        // Quando a resposta final voltar, eu devolvo pra trás na corrente
+                        Message::AllFilesResponse { files: final_files } => {
+                            Message::AllFilesResponse { files: final_files }
+                        }
+                        _ => Message::Ack, // Fallback em caso de erro
+                    }
+                }
+            }
+
             _ => Message::Ack,
 
         };
