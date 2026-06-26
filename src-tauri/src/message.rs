@@ -14,4 +14,7 @@ pub enum Message {
     PublishFile { file_id: u8, file_hash: String, owner_address: String },
     UpdateSuccessor { node: NodeInfo },
     UpdatePredecessor { node: Option<NodeInfo> },
+    PutData { key_id: u8, file_hash: String, value: String },
+    GetData { key_id: u8, file_hash: String },
+    DataResponse { value: Option<String> },
 }

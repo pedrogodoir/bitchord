@@ -55,27 +55,50 @@ pub fn create_torrent_meta(file_path: &str, file_name: &str) -> std::io::Result<
 }
 
 #[tauri::command]
-pub fn upload_file(file: String) -> Result<(), String> {
+pub fn upload_file(file: String, state: tauri::State<'_, std::sync::Arc<std::sync::Mutex<crate::node::Node>>>) -> Result<(), String> {
     println!("[TORRENT] Iniciando upload/processamento do arquivo: {}", file);
 
-    // Extrai o nome do arquivo a partir do caminho completo
     let path = Path::new(&file);
     let file_name = path.file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("arquivo_desconhecido");
 
-
     match create_torrent_meta(&file, file_name) {
         Ok(meta) => {
-            println!("[TORRENT] Sucesso! Metadados gerados:");
-            println!("  Nome: {}", meta.file_name);
-            println!("  Tamanho: {} bytes", meta.total_size);
-            println!("  Hash da Chave: {}", meta.file_hash);
-            println!("  Quantidade de Pedaços: {}", meta.chunk_hashes.len());
+            println!("[TORRENT] Metadados gerados com sucesso!");
+            println!("  Hash Completo: {}", meta.file_hash);
             
-            // TODO:Lógica de publicar no chord.
-            // Fluxo no excalidraw...
-            Ok(())
+            // 1. MAPEAMENTO: Converte os 2 primeiros caracteres hex do SHA-1 para um u8 (0 a 255)
+            // Exemplo: se o hash começa com "a3...", vira o ID Chord 163.
+            let key_id = u8::from_str_radix(&meta.file_hash[..2], 16)
+                .map_err(|e| format!("Erro ao mapear hash para ID Chord: {}", e))?;
+            
+            println!("[TORRENT] ID de busca gerado para o anel Chord: {}", key_id);
+
+            // 2. BUSCA DISTRIBUÍDA: Encontra o nó responsável por este ID no anel
+            let node_arc = state.inner().clone();
+            println!("[TORRENT] Roteando busca pelo nó responsável no anel...");
+            let target_node = crate::network::find_successor_rpc(node_arc, key_id);
+            println!("[TORRENT] Nó responsável encontrado: ID {} no endereço {}", target_node.id, target_node.address);
+
+            // 3. SERIALIZAÇÃO: Converte a struct TorrentMeta para uma String JSON
+            let serialized_meta = serde_json::to_string(&meta)
+                .map_err(|e| format!("Erro ao serializar metadados: {}", e))?;
+
+            // 4. ENVIO: Despacha os dados para o nó correto via mensagem PutData
+            let put_msg = crate::message::Message::PutData {
+                key_id,
+                file_hash: meta.file_hash.clone(),
+                value: serialized_meta,
+            };
+
+            match crate::network::send_message(&target_node.address, &put_msg) {
+                crate::message::Message::Ack => {
+                    println!("[TORRENT] SUCESSO! Metadados publicados e salvos no Nó {}!", target_node.id);
+                    Ok(())
+                }
+                _ => Err(format!("O Nó {} não confirmou o salvamento do arquivo.", target_node.id)),
+            }
         }
         Err(e) => {
             let erro_msg = format!("Falha ao processar arquivo: {}", e);

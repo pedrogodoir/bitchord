@@ -79,20 +79,18 @@ fn handle_connection(mut stream: TcpStream, node: Arc<Mutex<Node>>) {
                 Message::Ack
             }
 
-            Message::PublishFile { file_id, file_hash, owner_address } => {
-                println!("[TRACKER] Guardando arquivo {} (Chave {}) do dono {}", file_hash, file_id, owner_address);
-                
-                let mut node_lock = node.lock().unwrap();
-                
-                // Pega a lista de IPs que têm esse arquivo (ou cria uma lista nova se for o primeiro)
-                let entry = node_lock.tracker_data.entry(file_hash).or_insert_with(Vec::new);
-                
-                // Tenta adicionar ip na lista
-                if !entry.contains(&owner_address) {
-                    entry.push(owner_address);
-                }
-                
-                Message::Ack 
+            Message::PutData { key_id, file_hash, value } => {
+                let mut n = node.lock().unwrap();
+                println!("[STORAGE] Nó {} armazenando chave {} (ID Chord: {})", n.id, file_hash, key_id);
+                n.storage.insert(file_hash, value);
+                Message::Ack
+            }
+
+            Message::GetData { key_id, file_hash } => {
+                let n = node.lock().unwrap();
+                println!("[STORAGE] Nó {} consultando chave {} (ID Chord: {})", n.id, file_hash, key_id);
+                let value = n.storage.get(&file_hash).cloned();
+                Message::DataResponse { value }
             }
 
             Message::UpdateSuccessor { node: new_succ } => {

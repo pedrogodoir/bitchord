@@ -13,7 +13,7 @@ pub struct Node {
     pub predecessor: Option<NodeInfo>,
     pub fingers: Vec<NodeInfo>,
     pub next_finger: usize, // Contador usado pelo fix_fingers
-    pub tracker_data: HashMap<String, Vec<String>>, // Dados dos torrents
+    pub storage: std::collections::HashMap<String, String>, // Dados dos torrents
 }
 
 impl Node {
@@ -30,7 +30,7 @@ impl Node {
             predecessor: None,
             fingers: vec![],
             next_finger: 0,
-            tracker_data: HashMap::new(),
+            storage: HashMap::new(),
         }
     }
 }

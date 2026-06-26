@@ -67,6 +67,7 @@ pub fn run() {
     };
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(chord_node)
         .invoke_handler(tauri::generate_handler![get_node_info, leave_network, join_network, torrent::upload_file])

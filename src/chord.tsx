@@ -42,27 +42,6 @@ export default function ChordDashboard() {
     return () => clearInterval(interval);
   }, [hasLeft]);
 
-  // MELHORIA: Adicionado blocos de Log para rasteamento de erro no Console do Tauri
-  const handleUpload = async () => {
-    console.log("[DASHBOARD] Botão de injeção clicado. Tentando abrir o File Dialog...");
-    try {
-      const file = await open({
-        multiple: false,
-        directory: false,
-      });
-      
-      if (file) {
-        console.log("[DASHBOARD] Arquivo selecionado com sucesso:", file);
-        await invoke("upload_file", { file });
-        console.log("[DASHBOARD] Comando 'upload_file' enviado ao backend.");
-      } else {
-        console.log("[DASHBOARD] Seleção de arquivo cancelada pelo usuário.");
-      }
-    } catch (error) {
-      console.error("[DASHBOARD] Erro crítico ao tentar abrir o dialog ou enviar arquivo:", error);
-    }
-  };
-
   const handlePowerOff = async () => {
     try {
       await invoke("leave_network");
@@ -220,19 +199,18 @@ const knownMembers = [];
                  {/* Gaveta Oculta (Collapser) */}
                  {isExpanded && (
                    <div className="p-3 bg-zinc-900/40 border-t border-zinc-800/50 flex flex-col gap-2 transition-all">
-                     <button 
-                       type="button" // CORREÇÃO: Garante que o html trate estritamente como botão de ação
-                       onClick={(e) => {
-                         e.stopPropagation(); // CORREÇÃO: Impede que o clique suba e feche a gaveta ou perca escopo
-                         handleUpload();
-                       }}
-                       className="w-full flex items-center justify-center gap-2 py-2.5 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 border border-blue-500 rounded-md text-xs font-bold text-white transition-all shadow-md cursor-pointer"
-                     >
-                       <svg className="w-4 h-4 text-blue-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                       </svg>
-                       INJETAR ARQUIVO POR ESTE NÓ
-                     </button>
+                             <button id="upload-file" type="button" onClick={async ()=>{
+          const file =await open({
+            multiple: false,
+            directory: false,
+          });
+          console.log(file);
+
+          await invoke('upload_file',{file});
+           }}>
+
+            Upload file
+        </button>
                    </div>
                  )}
                </div>
