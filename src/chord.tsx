@@ -87,7 +87,7 @@ export default function ChordDashboard() {
       if (file) {
         console.log("Arquivo .bitchord selecionado:", file);
         // Descomente e ajuste a linha abaixo conforme o comando no Rust
-        // await invoke('process_bitchord_download', { filepath: file });
+        await invoke('download_file', { filepath: file });
       }
     } catch (e) {
       console.error("Erro ao abrir arquivo .bitchord:", e);

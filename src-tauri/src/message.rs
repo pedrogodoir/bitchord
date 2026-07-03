@@ -19,4 +19,11 @@ pub enum Message {
     DataResponse { value: Option<String> },
     GetAllFiles { origin_id: u8, files: Vec<String> }, 
     AllFilesResponse { files: Vec<String> },
+    RequestChunk {
+        file_hash: String,
+        chunk_index: usize,
+    },
+    ChunkData {
+        data: Vec<u8>,
+    }
 }

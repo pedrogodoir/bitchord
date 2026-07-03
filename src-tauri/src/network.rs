@@ -132,6 +132,30 @@ fn handle_connection(mut stream: TcpStream, node: Arc<Mutex<Node>>) {
                     }
                 }
             }
+            
+            Message::RequestChunk { file_hash, chunk_index } => {
+                println!("[SEEDER] Alguém pediu o bloco {} do arquivo {}", chunk_index, file_hash);
+                
+
+                // ---------------------------  ATENÇÃO !!   ----------------------------------
+                // TODO::::
+                // Você busca no seu banco de dados local qual é o caminho real do arquivo
+                // baseado nesse file_hash.
+                
+                // abre o arquivo (std::fs::File::open)
+                // Pula para a posição exata: (chunk_index * 256 * 1024)
+                // Lê 256 KB.
+                
+                // Envia de volta:
+                /*
+                let response = Message::ChunkData { data: buffer_lido };
+                let res_json = serde_json::to_string(&response).unwrap();
+                stream.write_all(res_json.as_bytes()).unwrap();
+                */
+
+                // Retorno temporário para satisfazer o compilador
+                Message::Ack
+            }
 
             _ => Message::Ack,
 
@@ -264,16 +288,16 @@ pub fn leave_ring(node_arc: Arc<Mutex<Node>>) {
     if succ.id != my_info.id {
         println!("[LEAVE] Informando vizinhos sobre a desconexão...");
         
-        // 1. Avisa o Predecessor para pular diretamente para o meu Sucessor
+        // Avisa o Predecessor para pular diretamente para o meu Sucessor
         if let Some(pred) = pred_opt.clone() {
             let _ = send_message(&pred.address, &Message::UpdateSuccessor { node: succ.clone() });
         }
 
-        // 2. Avisa o Sucessor para olhar para o meu Predecessor
+        // Avisa o Sucessor para olhar para o meu Predecessor
         let _ = send_message(&succ.address, &Message::UpdatePredecessor { node: pred_opt });
     }
 
-    // AGORA O PULO DO GATO: Atualiza o próprio estado para isolado (standalone)
+    // Atualiza o próprio estado para isolado (standalone)
     let mut node = node_arc.lock().unwrap();
     node.successor = node.info.clone(); // Aponta o sucessor para si mesmo
     node.predecessor = None;            // Limpa o predecessor
