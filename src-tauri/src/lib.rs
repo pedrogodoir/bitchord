@@ -70,7 +70,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(chord_node)
-        .invoke_handler(tauri::generate_handler![get_node_info, leave_network, join_network, torrent::upload_file, torrent::get_all_files_network])
+        .invoke_handler(tauri::generate_handler![get_node_info, leave_network, join_network, torrent::upload_file, torrent::download_file])
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::CloseRequested { .. } => {
                 println!("\n[SISTEMA] Janela fechada no 'X'! Avisando vizinhos antes de encerrar...");

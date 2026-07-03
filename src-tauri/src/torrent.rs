@@ -19,6 +19,50 @@ pub struct TorrentMeta {
     pub seeders: Vec<String>,
 }
 
+// Estrutura do arquivo.bitchord
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)] 
+pub struct BitChordFile {
+    pub version: u32,
+    pub file_name: String,
+    pub file_size: u64,
+    pub file_hash: String,
+    pub piece_size: usize,
+    pub piece_hashes: Vec<String>,
+}
+
+
+fn save_bitchord(meta: &TorrentMeta) -> Result<(), String> {
+    let bitchord = BitChordFile {
+        version: 1,
+        file_name: meta.file_name.clone(),
+        file_size: meta.total_size, 
+        file_hash: meta.file_hash.clone(),
+        piece_size: CHUNK_SIZE,     
+        piece_hashes: meta.chunk_hashes.clone(), 
+    };
+    
+    let bitchord_json = serde_json::to_string_pretty(&bitchord)
+        .map_err(|e| format!("Erro ao gerar JSON do BitChord: {}", e))?;
+    
+    // Diretório relativo ao projeto
+    let dir_path = Path::new("BitChordFiles");
+    
+    // Cria pasta se não existir
+    std::fs::create_dir_all(dir_path)
+        .map_err(|e| format!("Erro ao criar pasta BitChordFiles: {}", e))?;
+    
+    // Monta o caminho  "BitChordFiles/nome_do_arquivo.bitchord"
+    let bitchord_path = dir_path.join(&meta.file_name).with_extension("bitchord");
+    
+    // Escreve o arquivo no disco
+    std::fs::write(&bitchord_path, bitchord_json)
+        .map_err(|e| format!("Erro ao salvar o arquivo .bitchord: {}", e))?;
+    
+    println!("Arquivo salvo com sucesso em {:?}", bitchord_path);
+    Ok(())
+}
+
+
 pub fn create_torrent_meta(file_path: &str, file_name: &str) -> std::io::Result<TorrentMeta> {
     let mut file = File::open(file_path)?;
     let metadata = file.metadata()?;
@@ -108,6 +152,7 @@ pub fn upload_file(file: String, state: tauri::State<'_, std::sync::Arc<std::syn
 
             match crate::network::send_message(&target_node.address, &put_msg) {
                 crate::message::Message::Ack => {
+                    save_bitchord(&meta)?;
                     println!("[TORRENT] SUCESSO! Metadados publicados e salvos no Nó {}!", target_node.id);
                     Ok(())
                 }
@@ -122,57 +167,32 @@ pub fn upload_file(file: String, state: tauri::State<'_, std::sync::Arc<std::syn
     }
 }
 
+
+
+// Alterar para baixar do .bitchord, não mexi aqui ainda.
+// O upload já está salvando o .bitchord na pasta BitchordFiles
+// Temos agora que fazer a lógica de download ao receber um arquivo .bitchord
+// Esta função é antiga e não sei se funciona...
 #[tauri::command]
-pub fn get_all_files_network(state: tauri::State<'_, Arc<Mutex<Node>>>) -> Result<Vec<TorrentMeta>, String> {
-    println!("[TORRENT] Iniciando varredura global de arquivos...");
-
-    let (my_id, succ_addr, mut my_files) = {
-        let n = state.inner().lock().unwrap();
-        
-        let mut local_files: Vec<String> = Vec::new(); 
-        
-        for val in n.storage.values() {
-            local_files.push(val.clone());
-        }
-        
-        (n.id, n.successor.address.clone(), local_files)
-    };
-
-    let mut all_files_json: Vec<String> = Vec::new(); 
-
-    let is_alone = {
-        let n = state.inner().lock().unwrap();
-        n.id == n.successor.id
-    };
-
-    if is_alone {
-        println!("[TORRENT] Estou sozinho no anel. Retornando apenas arquivos locais.");
-        all_files_json = my_files;
-    } else {
-        // manda para o sucessor
-        let msg = Message::GetAllFiles {
-            origin_id: my_id,
-            files: my_files, // manda com os arquivos
-        };
-
-        match send_message(&succ_addr, &msg) {
-            Message::AllFilesResponse { files } => {
-                all_files_json = files;
-            }
-            _ => {
-                return Err("Falha ao completar a varredura na rede.".to_string());
-            }
-        }
+pub fn download_file(file_meta: TorrentMeta, state: tauri::State<'_, Arc<Mutex<Node>>>) -> Result<(), String> {
+    println!("[DOWNLOAD] Iniciando download de: {}", file_meta.file_name);
+    // print pra cada coisa de file_meta
+    println!("[DOWNLOAD] Nome do arquivo: {}", file_meta.file_name);
+    println!("[DOWNLOAD] Tamanho total: {} bytes", file_meta.total_size);
+    println!("[DOWNLOAD] Hash do arquivo: {}", file_meta.file_hash);
+    for seeder in &file_meta.seeders {
+        println!("[DOWNLOAD] Seeder disponível: {}", seeder);
+    }
+    
+    if file_meta.seeders.is_empty() {
+        return Err("Nenhum seeder disponível para este arquivo.".to_string());
     }
 
-    // Converte as Strings JSON de volta para Structs para o Tauri mandar pro Frontend
-    let mut parsed_files = Vec::new();
-    for json_str in all_files_json {
-        if let Ok(meta) = serde_json::from_str::<TorrentMeta>(&json_str) {
-            parsed_files.push(meta);
-        }
-    }
-
-    println!("[TORRENT] Varredura completa! {} arquivos encontrados.", parsed_files.len());
-    Ok(parsed_files)
+    let target_ip = &file_meta.seeders[0];
+    println!("[DOWNLOAD] Conectando direto ao seeder: {}", target_ip);
+    
+    // Lógica para abrir TCP e pedir os bytes 
+    
+    Ok(())
 }
+
