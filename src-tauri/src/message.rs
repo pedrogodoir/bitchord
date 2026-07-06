@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use crate::node::NodeInfo;
+use std::collections::HashMap;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum Message {
@@ -25,5 +26,9 @@ pub enum Message {
     },
     ChunkData {
         data: Vec<u8>,
+    },
+    TransferKeys { 
+        // Mapa contendo: file_hash -> JSON do TorrentMeta
+        data: HashMap<String, String> 
     }
 }

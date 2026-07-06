@@ -170,6 +170,17 @@ fn handle_connection(mut stream: TcpStream, node: Arc<Mutex<Node>>) {
                 }
             }
 
+            Message::TransferKeys { data } => {
+                let mut n = node.lock().unwrap();
+                println!("[STORAGE] Nó {} recebendo {} chaves migradas de um vizinho.", n.id, data.len());
+                
+                // Mescla os metadados recebidos no storage local
+                for (key, value) in data {
+                    n.storage.insert(key, value);
+                }
+                Message::Ack
+            }
+
             _ => Message::Ack,
 
         };
@@ -292,14 +303,21 @@ pub fn fix_fingers(node_arc: Arc<Mutex<Node>>) {
 }
 
 pub fn leave_ring(node_arc: Arc<Mutex<Node>>) {
-    let (my_info, pred_opt, succ) = {
+    let (my_info, pred_opt, succ, my_storage) = {
         let node = node_arc.lock().unwrap();
-        (node.info.clone(), node.predecessor.clone(), node.successor.clone())
+        // Extraímos o storage atual para migração
+        (node.info.clone(), node.predecessor.clone(), node.successor.clone(), node.storage.clone())
     };
 
-    // Se eu não estava sozinho no anel, costura as pontas avisando os vizinhos
+    // Se eu não estava sozinho no anel, faço a migração e costuro as pontas
     if succ.id != my_info.id {
         println!("[LEAVE] Informando vizinhos sobre a desconexão...");
+
+        // Transfere as chaves de metadados para o sucessor
+        if !my_storage.is_empty() {
+            println!("[LEAVE] Migrando {} arquivos para o sucessor ID {}...", my_storage.len(), succ.id);
+            let _ = send_message(&succ.address, &Message::TransferKeys { data: my_storage });
+        }
         
         // Avisa o Predecessor para pular diretamente para o meu Sucessor
         if let Some(pred) = pred_opt.clone() {
@@ -314,5 +332,6 @@ pub fn leave_ring(node_arc: Arc<Mutex<Node>>) {
     let mut node = node_arc.lock().unwrap();
     node.successor = node.info.clone(); // Aponta o sucessor para si mesmo
     node.predecessor = None;            // Limpa o predecessor
+    node.storage.clear();               // Limpa o storage local já que foi migrado
     println!("[LEAVE] Desconexão concluída. O nó agora está isolado.");
 }
