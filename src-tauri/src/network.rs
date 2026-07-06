@@ -135,26 +135,39 @@ fn handle_connection(mut stream: TcpStream, node: Arc<Mutex<Node>>) {
             
             Message::RequestChunk { file_hash, chunk_index } => {
                 println!("[SEEDER] Alguém pediu o bloco {} do arquivo {}", chunk_index, file_hash);
-                
 
-                // ---------------------------  ATENÇÃO !!   ----------------------------------
-                // TODO::::
-                // Você busca no seu banco de dados local qual é o caminho real do arquivo
-                // baseado nesse file_hash.
-                
-                // abre o arquivo (std::fs::File::open)
-                // Pula para a posição exata: (chunk_index * 256 * 1024)
-                // Lê 256 KB.
-                
-                // Envia de volta:
-                /*
-                let response = Message::ChunkData { data: buffer_lido };
-                let res_json = serde_json::to_string(&response).unwrap();
-                stream.write_all(res_json.as_bytes()).unwrap();
-                */
+                let file_path = {
+                    let n = node.lock().unwrap();
+                    n.seeding_files.get(&file_hash).cloned()
+                };
 
-                // Retorno temporário para satisfazer o compilador
-                Message::Ack
+                match file_path {
+                    Some(path) => {
+                        use std::io::{Seek, SeekFrom};
+                        match std::fs::File::open(&path) {
+                            Ok(mut f) => {
+                                let offset = (chunk_index * crate::torrent::CHUNK_SIZE) as u64;
+                                if f.seek(SeekFrom::Start(offset)).is_ok() {
+                                    let mut buffer = vec![0u8; crate::torrent::CHUNK_SIZE];
+                                    match f.read(&mut buffer) {
+                                        Ok(bytes_read) => {
+                                            buffer.truncate(bytes_read);
+                                            Message::ChunkData { data: buffer }
+                                        }
+                                        Err(_) => Message::Ack,
+                                    }
+                                } else {
+                                    Message::Ack
+                                }
+                            }
+                            Err(_) => Message::Ack,
+                        }
+                    }
+                    None => {
+                        println!("[SEEDER] Não tenho esse arquivo localmente!");
+                        Message::Ack
+                    }
+                }
             }
 
             _ => Message::Ack,

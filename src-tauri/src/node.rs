@@ -14,6 +14,7 @@ pub struct Node {
     pub fingers: Vec<NodeInfo>,
     pub next_finger: usize, // Contador usado pelo fix_fingers
     pub storage: std::collections::HashMap<String, String>, // Dados dos torrents
+    pub seeding_files: std::collections::HashMap<String, String>, 
 }
 
 impl Node {
@@ -31,6 +32,7 @@ impl Node {
             fingers: vec![],
             next_finger: 0,
             storage: HashMap::new(),
+            seeding_files: HashMap::new(),
         }
     }
 }

@@ -1,7 +1,8 @@
 // src/torrent.rs
 use sha1::{Digest, Sha1};
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Write};
+use std::net::TcpStream;
 use std::path::Path;
 // Definindo o tamanho do pedaço (ex: 256 KB)
 pub const CHUNK_SIZE: usize = 256 * 1024; 
@@ -30,6 +31,24 @@ pub struct BitChordFile {
     pub piece_hashes: Vec<String>,
 }
 
+fn fetch_meta(node_arc: Arc<Mutex<Node>>, key_id: u8, file_hash: String) -> Result<TorrentMeta, String> {
+    let target_node = crate::network::find_successor_rpc(node_arc.clone(), key_id);
+    println!("[SEARCH] Nó responsável pela chave {} é o ID {} em {}", key_id, target_node.id, target_node.address);
+
+    let get_msg = Message::GetData { key_id, file_hash: file_hash.clone() };
+    let response = crate::network::send_message(&target_node.address, &get_msg);
+
+    match response {
+        Message::DataResponse { value: Some(data) } => {
+            serde_json::from_str::<TorrentMeta>(&data)
+                .map_err(|e| format!("Erro ao decodificar metadados: {}", e))
+        }
+        Message::DataResponse { value: None } => {
+            Err(format!("Nenhum arquivo encontrado para a chave '{}'.", file_hash))
+        }
+        _ => Err("Resposta inesperada da rede ao buscar metadados.".to_string()),
+    }
+}
 
 fn save_bitchord(meta: &TorrentMeta) -> Result<(), String> {
     let bitchord = BitChordFile {
@@ -143,6 +162,11 @@ pub fn upload_file(file: String, state: tauri::State<'_, std::sync::Arc<std::syn
             let serialized_meta = serde_json::to_string(&meta)
                 .map_err(|e| format!("Erro ao serializar metadados: {}", e))?;
 
+            {
+                let mut n = node_arc.lock().unwrap();
+                n.seeding_files.insert(meta.file_hash.clone(), file.clone());
+            }
+
             // 4. ENVIO: Despacha os dados para o nó correto via mensagem PutData
             let put_msg = crate::message::Message::PutData {
                 key_id,
@@ -167,116 +191,104 @@ pub fn upload_file(file: String, state: tauri::State<'_, std::sync::Arc<std::syn
     }
 }
 
-
-
-// Alterar para baixar do .bitchord, não mexi aqui ainda.
-// O upload já está salvando o .bitchord na pasta BitchordFiles
-// Temos agora que fazer a lógica de download ao receber um arquivo .bitchord
-// Esta função é antiga e não sei se funciona...
 #[tauri::command]
-pub fn download_file(filepath: String, state: tauri::State<'_, Arc<Mutex<Node>>>) -> Result<(), String> {
+pub fn search_file(query: String, state: tauri::State<'_, Arc<Mutex<Node>>>) -> Result<TorrentMeta, String> {
+    let mut hasher = Sha1::new();
+    hasher.update(query.as_bytes());
+    let finalized = hasher.finalize();
+    let file_hash = hex::encode(finalized);
+    let key_id = finalized[0];
+
+    println!("[SEARCH] Buscando '{}' -> hash {} (chave {})", query, file_hash, key_id);
+
+    fetch_meta(state.inner().clone(), key_id, file_hash)
+}
+
+fn request_chunk_from_seeder(seeder_addr: &str, file_hash: &str, chunk_index: usize) -> Result<Vec<u8>, String> {
+    let mut stream = TcpStream::connect(seeder_addr)
+        .map_err(|e| format!("Falha ao conectar: {}", e))?;
+
+    let request = Message::RequestChunk { file_hash: file_hash.to_string(), chunk_index };
+    let req_json = serde_json::to_vec(&request)
+        .map_err(|e| format!("Erro ao serializar pedido: {}", e))?;
+    stream.write_all(&req_json).map_err(|e| format!("Erro ao enviar pedido: {}", e))?;
+
+    let mut buffer = Vec::new();
+    stream.read_to_end(&mut buffer).map_err(|e| format!("Erro ao ler resposta: {}", e))?;
+
+    match serde_json::from_slice::<Message>(&buffer) {
+        Ok(Message::ChunkData { data }) => Ok(data),
+        _ => Err("Seeder respondeu com formato inválido".to_string()),
+    }
+}
+
+fn download_all_chunks(meta: &TorrentMeta, save_dir: &Path) -> Result<std::path::PathBuf, String> {
+    if meta.seeders.is_empty() {
+        return Err("Nenhum seeder disponível para este arquivo.".to_string());
+    }
+
+    let mut final_data: Vec<u8> = Vec::with_capacity(meta.total_size as usize);
+
+    for (index, expected_hash) in meta.chunk_hashes.iter().enumerate() {
+        let mut chunk_ok = false;
+
+        for seeder in &meta.seeders {
+            match request_chunk_from_seeder(seeder, &meta.file_hash, index) {
+                Ok(data) => {
+                    let mut hasher = Sha1::new();
+                    hasher.update(&data);
+                    let got_hash = hex::encode(hasher.finalize());
+
+                    if &got_hash == expected_hash {
+                        final_data.extend_from_slice(&data);
+                        chunk_ok = true;
+                        break;
+                    } else {
+                        eprintln!("[DOWNLOAD] Hash do bloco {} não confere no seeder {}, tentando outro...", index, seeder);
+                    }
+                }
+                Err(e) => eprintln!("[DOWNLOAD] Falha no bloco {} via {}: {}", index, seeder, e),
+            }
+        }
+
+        if !chunk_ok {
+            return Err(format!("Não foi possível obter o bloco {} de nenhum seeder.", index));
+        }
+    }
+
+    std::fs::create_dir_all(save_dir)
+        .map_err(|e| format!("Erro ao criar diretório de destino: {}", e))?;
+    let final_path = save_dir.join(&meta.file_name);
+    std::fs::write(&final_path, &final_data)
+        .map_err(|e| format!("Erro ao salvar arquivo final: {}", e))?;
+
+    println!("[DOWNLOAD] Arquivo remontado com sucesso em {:?}", final_path);
+    Ok(final_path)
+}
+
+#[tauri::command]
+pub fn download_file(filepath: String, save_dir: String, state: tauri::State<'_, Arc<Mutex<Node>>>) -> Result<String, String> {
     println!("[DOWNLOAD] Lendo arquivo bitchord em: {}", filepath);
 
-    // LER O ARQUIVO LOCAL
     let file_content = std::fs::read_to_string(&filepath)
         .map_err(|e| format!("Erro ao ler o arquivo .bitchord: {}", e))?;
-
     let bitchord: BitChordFile = serde_json::from_str(&file_content)
         .map_err(|e| format!("Erro ao decodificar o .bitchord: {}", e))?;
 
-    println!("[DOWNLOAD] Arquivo carregado: {} (Hash: {})", bitchord.file_name, bitchord.file_hash);
-
-    // DESCOBRIR A CHAVE CHORD (Mapeamento do Hash)
     let key_id = u8::from_str_radix(&bitchord.file_hash[..2], 16)
         .map_err(|e| format!("Erro ao mapear hash para ID Chord: {}", e))?;
 
-    println!("[DOWNLOAD] Buscando na DHT os metadados para a chave {}", key_id);
-
-    // ENCONTRAR O NÓ RESPONSÁVEL (Guardião dos Metadados)
-    let node_arc = state.inner().clone();
-    let target_node = crate::network::find_successor_rpc(node_arc.clone(), key_id);
-
-    println!("[DOWNLOAD] Nó responsável pela chave {} é o ID {} no endereço {}", key_id, target_node.id, target_node.address);
-
-    // RESGATAR A TorrentMeta (Que contém os seeders)
-    let get_msg = crate::message::Message::GetData {
-        key_id,
-        file_hash: bitchord.file_hash.clone(),
-    };
-
-    let response = crate::network::send_message(&target_node.address, &get_msg);
-
-    // PROCESSAR A RESPOSTA DA REDE
-    let meta_json = match response {
-        crate::message::Message::DataResponse { value: Some(data) } => data,
-        crate::message::Message::DataResponse { value: None } => {
-            return Err(format!("Arquivo {} não está mais disponível na DHT.", bitchord.file_name));
-        }
-        _ => {
-            return Err("Resposta inesperada ao consultar a DHT.".to_string());
-        }
-    };
-
-    let meta: TorrentMeta = serde_json::from_str(&meta_json)
-        .map_err(|e| format!("Erro ao processar metadados recebidos da rede: {}", e))?;
-
-    // INICIAR DOWNLOAD COM OS SEEDERS
-    if meta.seeders.is_empty() {
-        return Err("Nenhum seeder ativo encontrado para este arquivo.".to_string());
-    }
-
-    println!("[DOWNLOAD] Metadados recuperados! Seeders disponíveis:");
-    for seeder in &meta.seeders {
-        println!("  -> {}", seeder);
-    }
-
-    // MEXER NISSO AQUI DEPOIS
-    let target_ip = &meta.seeders[0]; // Pegando o primeiro seeder da lista (Pode ser melhorado no futuro)
-    println!("[DOWNLOAD] Conectando direto ao seeder: {}", target_ip);
-    
-    use std::net::TcpStream;
-    use std::io::{Write, Read};
-
-
-    // ABRE A CONEXÃO TCP COM O SEEDER
-    // O target_ip já deve ser algo como "192.168.1.50:8000"
-    let mut stream = TcpStream::connect(target_ip)
-        .map_err(|e| format!("Falha ao conectar no seeder {}: {}", target_ip, e))?;
-
-    println!("[DOWNLOAD] Conectado! Pedindo o bloco 0...");
-
-    // MONTA O PEDIDO
-    let request = crate::message::Message::RequestChunk {
-        file_hash: meta.file_hash.clone(),
-        chunk_index: 0, // Pedindo o primeiro bloco
-    };
-
-    let req_json = serde_json::to_string(&request)
-        .map_err(|e| format!("Erro ao serializar pedido de chunk: {}", e))?;
-
-    // ENVIA O PEDIDO PARA A STREAM
-    stream.write_all(req_json.as_bytes())
-        .map_err(|e| format!("Erro ao enviar pedido: {}", e))?;
-
-    // LÊ A RESPOSTA (O pedaço do arquivo)
-    // O servidor vai mandar um JSON (Message::ChunkData) com os bytes, ou fechar a conexão.
-    let mut buffer = String::new();
-    stream.read_to_string(&mut buffer)
-        .map_err(|e| format!("Erro ao ler resposta do seeder: {}", e))?;
-
-    // DESERIALIZA OS DADOS RECEBIDOS
-    match serde_json::from_str::<crate::message::Message>(&buffer) {
-        Ok(crate::message::Message::ChunkData { data }) => {
-            println!("[DOWNLOAD] Sucesso! Recebidos {} bytes do chunk 0.", data.len());
-            
-            // salvar esses bytes em um arquivo final local usando std::fs::write
-            // ou dando um 'append' (std::fs::OpenOptions) se for um arquivo muito grande.
-            std::fs::write(&meta.file_name, &data)
-                .map_err(|e| format!("Erro ao salvar arquivo no disco: {}", e))?;
-        }
-        _ => return Err("Seeder respondeu com um formato inválido ou recusou o pedido.".to_string()),
-    }
-    
-    Ok(())
+    let meta = fetch_meta(state.inner().clone(), key_id, bitchord.file_hash)?;
+    let path = download_all_chunks(&meta, Path::new(&save_dir))?;
+    Ok(path.to_string_lossy().to_string())
 }
 
+#[tauri::command]
+pub fn download_by_hash(file_hash: String, save_dir: String, state: tauri::State<'_, Arc<Mutex<Node>>>) -> Result<String, String> {
+    let key_id = u8::from_str_radix(&file_hash[..2], 16)
+        .map_err(|e| format!("Hash inválido: {}", e))?;
+
+    let meta = fetch_meta(state.inner().clone(), key_id, file_hash)?;
+    let path = download_all_chunks(&meta, Path::new(&save_dir))?;
+    Ok(path.to_string_lossy().to_string())
+}
