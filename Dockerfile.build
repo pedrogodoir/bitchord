@@ -1,31 +1,32 @@
-# Use o Ubuntu 24.04 para ter acesso aos pacotes mais novos
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV PATH="/root/.cargo/bin:${PATH}"
 
-# Atualize a lista de pacotes e instale as dependências corretas para a versão 4.1
 RUN apt-get update && apt-get install -y \
-    libwebkit2gtk-4.1-dev \
     build-essential \
     curl \
-    wget \
+    pkg-config \
     file \
+    git \
     libssl-dev \
     libgtk-3-dev \
+    libwebkit2gtk-4.1-dev \
     libayatana-appindicator3-dev \
     librsvg2-dev \
-    pkg-config \
     xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Instala o Node.js (versão 20 ou superior)
+# Node
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs
 
-# Instala o Rust
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-ENV PATH="/root/.cargo/bin:${PATH}"
+# Rust
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y
+
+# Tauri CLI
+RUN cargo install tauri-cli
 
 WORKDIR /app
 
-CMD ["sh", "-c", "npm install && npm run tauri build"]
+CMD bash
