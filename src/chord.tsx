@@ -55,7 +55,8 @@ export default function ChordDashboard() {
       const data = await invoke<NodeInfo>("get_node_info");
       setNode(data);
     } catch (error) {
-      console.error("Erro ao buscar informações do nó:", error);
+      console.error("Erro ao buscar informações do nó (backend inativo):", error);
+      setNode(null); 
     }
   };
 
