@@ -42,7 +42,7 @@ The network operates on a logical ring topology with an 8-bit identifier space (
 6. The node registers itself as a new seeder for the downloaded file.
 
 ### Fault Tolerance & Crash Recovery
-* **Heartbeat Protocol:** Nodes actively monitor their immediate neighbors using rapid TCP ping checks (`is_alive`). 
+* **Heartbeat Protocol:** Nodes actively monitor their immediate neighbors using rapid TCP ping checks (`is_alive`).
 * If a node crashes or drops unexpectedly (e.g., forced exit), neighboring nodes detect the timeout, dynamically bypass the dead node using their Finger Tables, and heal the ring automatically.
 
 ### Graceful Leave Flow
@@ -87,51 +87,72 @@ Commands exposed by Rust to the React UI:
 
 ## ▶️ Building and Running
 
-Before you begin, make sure that **Docker** is installed and running on your machine.
+There are two ways to build BitChord, depending on your environment and operating system.
 
-### 1. Build the Tauri builder image
+### Method 1: With Docker (Linux only / Generates `.AppImage`)
+Ideal if you are on Linux and **do not** want to install the Rust and Node.js environments on your machine. Docker will handle everything and generate a standalone executable.
 
+## 1. Build the Tauri builder image:
 From the project root, run:
-
 ```bash
 docker build -f Dockerfile.build -t tauri-builder .
 ```
 
-### 2. Start the build container
-
+## 2. Start the build container:
 ```bash
 docker run --rm -it -v "${PWD}:/app" tauri-builder
 ```
-
-If everything worked correctly, you should see a prompt similar to:
-
+You will see a prompt similar to:
 ```text
 root@xxxxxxxx:/app#
 ```
+This indicates that you are inside the container.
 
-### 3. Install dependencies and build the application
-
+## 3. Install dependencies and build:
+Inside the container, run:
 ```bash
 npm install
-cargo tauri build
+npm run tauri build
 ```
 
-### 4. Run the generated application
-
+## 4. Locate and run the application:
 The generated AppImage will be located at:
-
 ```text
 src-tauri/target/release/bundle/appimage/
 ```
-
-Give permission:
-
+Grant execution permissions and run the file:
 ```bash
 chmod +x bitchord_0.1.0_amd64.AppImage
-```
-
-Then run it:
-
-```bash
 ./bitchord_0.1.0_amd64.AppImage
 ```
+
+---
+
+### Method 2: Native (Windows or Linux with Rust installed)
+Ideal if you already have the development environment set up, with `Node.js` and `Rust` installed. Tauri automatically detects the operating system and generates the corresponding executable (`.exe` for Windows or `.AppImage`/`.deb` for Linux).
+
+## 1. Install frontend dependencies:
+From the project root, open the terminal and run:
+```bash
+npm install
+```
+
+## 2. Build the application:
+Use the NPM script that calls Tauri to generate the optimized executable:
+```bash
+npm run tauri build
+```
+
+## 3. Locate the final executable:
+* **On Windows:** the installer will be located at:
+  ```text
+  src-tauri/target/release/bundle/nsis/
+  ```
+  The direct executable can also be found at:
+  ```text
+  src-tauri/target/release/
+  ```
+* **On Linux:** the AppImage will be located at:
+  ```text
+  src-tauri/target/release/bundle/appimage/
+  ```
