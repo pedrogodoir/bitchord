@@ -1,0 +1,38 @@
+name: Release BitChord para Windows
+
+on:
+  push:
+    tags:
+      - 'v*' # O workflow só vai rodar quando você criar uma tag tipo "v1.0.0"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      - name: Instalar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Instalar dependências do Front-end (NPM)
+        run: npm install
+
+      - name: Instalar Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Compilar o App Tauri
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: app-v__VERSION__ # Pega a versão do tauri.conf.json
+          releaseName: 'BitChord v__VERSION__'
+          releaseBody: 'Nova versão do BitChord para Windows.'
+          releaseDraft: true
+          prerelease: false
