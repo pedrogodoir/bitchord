@@ -31,7 +31,7 @@ pub struct BitChordFile {
     pub piece_hashes: Vec<String>,
 }
 
-fn fetch_meta(node_arc: Arc<Mutex<Node>>, key_id: u8, file_hash: String) -> Result<TorrentMeta, String> {
+pub fn fetch_meta(node_arc: Arc<Mutex<Node>>, key_id: u8, file_hash: String) -> Result<TorrentMeta, String> {
     let target_node = crate::network::find_successor_rpc(node_arc.clone(), key_id);
     println!("[SEARCH] Nó responsável pela chave {} é o ID {} em {}", key_id, target_node.id, target_node.address);
 
@@ -267,20 +267,25 @@ fn download_all_chunks(meta: &TorrentMeta, save_dir: &Path) -> Result<std::path:
 }
 
 fn register_as_seeder(node_arc: Arc<Mutex<Node>>,mut meta: TorrentMeta,key_id: u8,file_path: String,) -> Result<(), String> {
-    let (my_address, target_node) = {
+    // Pega o endereço, o escopo {} garante que o Mutex será destravado imediatamente.
+    let my_address = {
         let node_lock = node_arc.lock().unwrap();
-        (node_lock.info.address.clone(),crate::network::find_successor_rpc(node_arc.clone(), key_id))
-    };
+        node_lock.info.address.clone()
+    }; 
 
-    // Adiciona o arquivo ao dicionário local de seeding
-    let mut node_lock = node_arc.lock().unwrap();
-    node_lock.seeding_files.insert(meta.file_hash.clone(), file_path);
-    println!("[SEEDER] Agora estou atuando como seeder para: {}", meta.file_hash);
-    
+    // chamar a função RPC, pois o Mutex está livre.
+    let target_node = crate::network::find_successor_rpc(node_arc.clone(), key_id);
+
+    // Travamos novamente apenas para atualizar o dicionário local
+    {
+        let mut node_lock = node_arc.lock().unwrap();
+        node_lock.seeding_files.insert(meta.file_hash.clone(), file_path);
+        println!("[SEEDER] Agora estou atuando como seeder para: {}", meta.file_hash);
+    } //  Mutex liberado aqui
 
     // Atualiza a DHT com o meu IP na lista de seeders (se já não estiver lá)
     if !meta.seeders.contains(&my_address) {
-        meta.seeders.push(my_address);
+        meta.seeders.push(my_address.clone());
         
         let serialized_meta = serde_json::to_string(&meta)
             .map_err(|e| format!("Erro ao serializar metadados atualizados: {}", e))?;

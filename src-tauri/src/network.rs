@@ -303,35 +303,64 @@ pub fn fix_fingers(node_arc: Arc<Mutex<Node>>) {
 }
 
 pub fn leave_ring(node_arc: Arc<Mutex<Node>>) {
-    let (my_info, pred_opt, succ, my_storage) = {
+    // Pega os dados vitais antes de começar a desmontar o nó
+    let (my_info, pred_opt, succ, my_storage, files_im_seeding) = {
         let node = node_arc.lock().unwrap();
-        // Extraímos o storage atual para migração
-        (node.info.clone(), node.predecessor.clone(), node.successor.clone(), node.storage.clone())
+        (
+            node.info.clone(), 
+            node.predecessor.clone(), 
+            node.successor.clone(), 
+            node.storage.clone(),
+            node.seeding_files.clone() // Pega a lista de arquivos que estou semeando
+        )
     };
 
-    // Se eu não estava sozinho no anel, faço a migração e costuro as pontas
-    if succ.id != my_info.id {
-        println!("[LEAVE] Informando vizinhos sobre a desconexão...");
+    println!("[LEAVE] Iniciando processo de desconexão...");
 
-        // Transfere as chaves de metadados para o sucessor
+    // Avisando os donos dos metadados para tirarem meu IP
+    for (file_hash, _) in files_im_seeding {
+        if let Ok(key_id) = u8::from_str_radix(&file_hash[..2], 16) {
+            // Busca o metadado atual lá na DHT
+            if let Ok(mut meta) = crate::torrent::fetch_meta(node_arc.clone(), key_id, file_hash.clone()) {
+                
+                // Remove meu IP da lista
+                meta.seeders.retain(|ip| ip != &my_info.address);
+                
+                // Manda o JSON corrigido de volta para quem cuida dessa chave
+                if let Ok(new_json) = serde_json::to_string(&meta) {
+                    let target_node = crate::network::find_successor_rpc(node_arc.clone(), key_id);
+                    let put_msg = Message::PutData {
+                        key_id,
+                        file_hash: file_hash.clone(),
+                        value: new_json,
+                    };
+                    let _ = send_message(&target_node.address, &put_msg);
+                    println!("[LEAVE] Meu IP foi removido da lista do arquivo {}", file_hash);
+                }
+            }
+        }
+    }
+
+    // Se eu não estava sozinho no anel, faço a migração do storage e costuro as pontas
+    if succ.id != my_info.id {
         if !my_storage.is_empty() {
-            println!("[LEAVE] Migrando {} arquivos para o sucessor ID {}...", my_storage.len(), succ.id);
+            println!("[LEAVE] Migrando {} chaves para o sucessor ID {}...", my_storage.len(), succ.id);
             let _ = send_message(&succ.address, &Message::TransferKeys { data: my_storage });
         }
         
-        // Avisa o Predecessor para pular diretamente para o meu Sucessor
         if let Some(pred) = pred_opt.clone() {
             let _ = send_message(&pred.address, &Message::UpdateSuccessor { node: succ.clone() });
         }
 
-        // Avisa o Sucessor para olhar para o meu Predecessor
         let _ = send_message(&succ.address, &Message::UpdatePredecessor { node: pred_opt });
     }
 
     // Atualiza o próprio estado para isolado (standalone)
     let mut node = node_arc.lock().unwrap();
-    node.successor = node.info.clone(); // Aponta o sucessor para si mesmo
-    node.predecessor = None;            // Limpa o predecessor
-    node.storage.clear();               // Limpa o storage local já que foi migrado
+    node.successor = node.info.clone(); 
+    node.predecessor = None;            
+    node.storage.clear();               
+    node.seeding_files.clear(); // Limpa também o dicionário local
+    
     println!("[LEAVE] Desconexão concluída. O nó agora está isolado.");
 }
