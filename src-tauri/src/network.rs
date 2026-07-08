@@ -35,14 +35,16 @@ pub fn start_server(address: String, node: Arc<Mutex<Node>>) {
 }
 
 fn handle_connection(mut stream: TcpStream, node: Arc<Mutex<Node>>) {
-    let mut buffer = [0; 4096];
-    if let Ok(size) = stream.read(&mut buffer) {
+    let mut buffer = Vec::new(); // vetor sem limite de tamanho
+    
+    // Lê tudo até o outro computador avisar que terminou de enviar
+    if let Ok(size) = stream.read_to_end(&mut buffer) {
         if size == 0 {
             return;
         }
-        let message: Message = match serde_json::from_slice(&buffer[..size]) {
+        let message: Message = match serde_json::from_slice(&buffer) {
             Ok(msg) => msg,
-            Err(_) => return,
+            Err(_) => return, // JSON quebrado é descartado
         };
         // println!("[NETWORK] Mensagem recebida: {:?}", message);
 
@@ -194,20 +196,22 @@ fn handle_connection(mut stream: TcpStream, node: Arc<Mutex<Node>>) {
 pub fn send_message(address: &str, message: &Message) -> Message {
     match TcpStream::connect(address) {
         Ok(mut stream) => {
-            // println!("[NETWORK] Conectando em {} para enviar {:?}", address, message);
             let payload = serde_json::to_vec(message).unwrap();
             let _ = stream.write_all(&payload);
+            
+            // Avisa que terminou de enviar os dados
+            // Isso destrava o "read_to_end" do outro lado.
+            let _ = stream.shutdown(std::net::Shutdown::Write);
 
-            let mut buffer = [0; 4096];
-            if let Ok(size) = stream.read(&mut buffer) {
+            let mut buffer = Vec::new(); 
+            if let Ok(size) = stream.read_to_end(&mut buffer) { 
                 if size > 0 {
-                    // println!("[NETWORK] Recebido resposta de {}: {} bytes", address, size);
-                    return serde_json::from_slice(&buffer[..size]).unwrap_or(Message::Ack);
+                    return serde_json::from_slice(&buffer).unwrap_or(Message::Ack);
                 }
             }
             Message::Ack
         }
-        Err(_) => Message::Ack, // Retorna Ack genérico caso o nó esteja offline temporalmente
+        Err(_) => Message::Ack, 
     }
 }
 
