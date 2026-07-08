@@ -136,14 +136,14 @@ pub fn upload_file(file: String, state: tauri::State<'_, std::sync::Arc<std::syn
             println!("[TORRENT] Metadados gerados com sucesso!");
             println!("  Hash Completo: {}", meta.file_hash);
             
-            // 1. MAPEAMENTO: Converte os 2 primeiros caracteres hex do SHA-1 para um u8 (0 a 255)
+            // MAPEAMENTO: Converte os 2 primeiros caracteres hex do SHA-1 para um u8 (0 a 255)
             // Exemplo: se o hash começa com "a3...", vira o ID Chord 163.
             let key_id = u8::from_str_radix(&meta.file_hash[..2], 16)
                 .map_err(|e| format!("Erro ao mapear hash para ID Chord: {}", e))?;
             
             println!("[TORRENT] ID de busca gerado para o anel Chord: {}", key_id);
 
-            // 2. BUSCA DISTRIBUÍDA: Encontra o nó responsável
+            // BUSCA DISTRIBUÍDA: Encontra o nó responsável
             let node_arc = state.inner().clone();
             println!("[TORRENT] Roteando busca pelo nó responsável no anel...");
             let target_node = crate::network::find_successor_rpc(node_arc.clone(), key_id);
@@ -158,7 +158,7 @@ pub fn upload_file(file: String, state: tauri::State<'_, std::sync::Arc<std::syn
             meta.seeders.push(my_address);
            
 
-            // 3. SERIALIZAÇÃO: Converte a struct TorrentMeta para uma String JSON
+            // SERIALIZAÇÃO: Converte a struct TorrentMeta para uma String JSON
             let serialized_meta = serde_json::to_string(&meta)
                 .map_err(|e| format!("Erro ao serializar metadados: {}", e))?;
 
@@ -167,7 +167,7 @@ pub fn upload_file(file: String, state: tauri::State<'_, std::sync::Arc<std::syn
                 n.seeding_files.insert(meta.file_hash.clone(), file.clone());
             }
 
-            // 4. ENVIO: Despacha os dados para o nó correto via mensagem PutData
+            // ENVIO: Despacha os dados para o nó correto via mensagem PutData
             let put_msg = crate::message::Message::PutData {
                 key_id,
                 file_hash: meta.file_hash.clone(),
@@ -266,6 +266,38 @@ fn download_all_chunks(meta: &TorrentMeta, save_dir: &Path) -> Result<std::path:
     Ok(final_path)
 }
 
+fn register_as_seeder(node_arc: Arc<Mutex<Node>>,mut meta: TorrentMeta,key_id: u8,file_path: String,) -> Result<(), String> {
+    let (my_address, target_node) = {
+        let node_lock = node_arc.lock().unwrap();
+        (node_lock.info.address.clone(),crate::network::find_successor_rpc(node_arc.clone(), key_id))
+    };
+
+    // Adiciona o arquivo ao dicionário local de seeding
+    let mut node_lock = node_arc.lock().unwrap();
+    node_lock.seeding_files.insert(meta.file_hash.clone(), file_path);
+    println!("[SEEDER] Agora estou atuando como seeder para: {}", meta.file_hash);
+    
+
+    // Atualiza a DHT com o meu IP na lista de seeders (se já não estiver lá)
+    if !meta.seeders.contains(&my_address) {
+        meta.seeders.push(my_address);
+        
+        let serialized_meta = serde_json::to_string(&meta)
+            .map_err(|e| format!("Erro ao serializar metadados atualizados: {}", e))?;
+
+        let put_msg = crate::message::Message::PutData {
+            key_id,
+            file_hash: meta.file_hash.clone(),
+            value: serialized_meta,
+        };
+
+        let _ = crate::network::send_message(&target_node.address, &put_msg);
+        println!("[DHT] Lista de seeders atualizada na rede para o arquivo {}!", meta.file_hash);
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
 pub fn download_file(filepath: String, save_dir: String, state: tauri::State<'_, Arc<Mutex<Node>>>) -> Result<String, String> {
     println!("[DOWNLOAD] Lendo arquivo bitchord em: {}", filepath);
@@ -278,9 +310,15 @@ pub fn download_file(filepath: String, save_dir: String, state: tauri::State<'_,
     let key_id = u8::from_str_radix(&bitchord.file_hash[..2], 16)
         .map_err(|e| format!("Erro ao mapear hash para ID Chord: {}", e))?;
 
-    let meta = fetch_meta(state.inner().clone(), key_id, bitchord.file_hash)?;
+    let meta = fetch_meta(state.inner().clone(), key_id, bitchord.file_hash.clone())?;
+    
     let path = download_all_chunks(&meta, Path::new(&save_dir))?;
-    Ok(path.to_string_lossy().to_string())
+    let final_path_str = path.to_string_lossy().to_string();
+
+    // função auxiliar
+    register_as_seeder(state.inner().clone(), meta, key_id, final_path_str.clone())?;
+
+    Ok(final_path_str)
 }
 
 #[tauri::command]
@@ -288,7 +326,13 @@ pub fn download_by_hash(file_hash: String, save_dir: String, state: tauri::State
     let key_id = u8::from_str_radix(&file_hash[..2], 16)
         .map_err(|e| format!("Hash inválido: {}", e))?;
 
-    let meta = fetch_meta(state.inner().clone(), key_id, file_hash)?;
+    let meta = fetch_meta(state.inner().clone(), key_id, file_hash.clone())?;
+    
     let path = download_all_chunks(&meta, Path::new(&save_dir))?;
-    Ok(path.to_string_lossy().to_string())
+    let final_path_str = path.to_string_lossy().to_string();
+
+    // função auxiliar
+    register_as_seeder(state.inner().clone(), meta, key_id, final_path_str.clone())?;
+
+    Ok(final_path_str)
 }
