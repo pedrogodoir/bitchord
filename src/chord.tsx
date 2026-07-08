@@ -158,6 +158,12 @@ export default function ChordDashboard() {
       setSearchResult(meta);
     } catch (e) {
       setSearchError(String(e));
+      
+      // O erro some sozinho depois de 5 segundos
+      setTimeout(() => {
+        setSearchError(null);
+      }, 5000);
+      
     } finally {
       setSearching(false);
     }
@@ -348,7 +354,10 @@ export default function ChordDashboard() {
             <input
               type="text"
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setSearchError(null); // Limpa o erro assim que o usuário digita algo novo
+              }}
               onKeyDown={(e) => e.key === "Enter" && handleSearch()}
               placeholder="Nome exato do arquivo publicado (ex: filme.mp4)"
               className="flex-1 bg-zinc-900 border border-zinc-700 rounded-md px-3 py-2.5 text-sm font-mono text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-purple-500 transition-colors"
