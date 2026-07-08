@@ -2,6 +2,8 @@
 
 A peer-to-peer file sharing application inspired by BitTorrent, built on top of the Chord Distributed Hash Table (DHT) protocol.
 
+<img width="1535" height="970" alt="image" src="https://github.com/user-attachments/assets/32e0015e-930d-40b3-9de2-510cbd429291" />
+
 ## 🧠 Architecture Overview
 
 The system architecture is decentralized and divided into two main layers of responsibility:
