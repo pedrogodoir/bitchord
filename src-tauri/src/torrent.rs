@@ -124,7 +124,7 @@ pub fn create_torrent_meta(file_path: &str, file_name: &str) -> std::io::Result<
 }
 
 #[tauri::command]
-pub fn upload_file(file: String, state: tauri::State<'_, std::sync::Arc<std::sync::Mutex<crate::node::Node>>>) -> Result<(), String> {
+pub fn upload_file(file: String, state: tauri::State<'_, std::sync::Arc<std::sync::Mutex<crate::node::Node>>>) -> Result<String, String> {
     println!("[TORRENT] Iniciando upload/processamento do arquivo: {}", file);
 
     let path = Path::new(&file);
@@ -178,8 +178,11 @@ pub fn upload_file(file: String, state: tauri::State<'_, std::sync::Arc<std::syn
             match crate::network::send_message(&target_node.address, &put_msg) {
                 crate::message::Message::Ack => {
                     save_bitchord(&meta)?;
-                    println!("[TORRENT] SUCESSO! Metadados publicados e salvos no Nó {}!", target_node.id);
-                    Ok(())
+                    
+                    // CRIAMOS A MENSAGEM AQUI E RETORNAMOS ELA!
+                    let sucesso_msg = format!("SUCESSO! Publicado e salvo no Nó {}!", target_node.id);
+                    println!("[TORRENT] {}", sucesso_msg);
+                    Ok(sucesso_msg) // <--- Retorna a String para o React!
                 }
                 _ => Err(format!("O Nó {} não confirmou o salvamento do arquivo.", target_node.id)),
             }
@@ -212,7 +215,11 @@ fn request_chunk_from_seeder(seeder_addr: &str, file_hash: &str, chunk_index: us
     let request = Message::RequestChunk { file_hash: file_hash.to_string(), chunk_index };
     let req_json = serde_json::to_vec(&request)
         .map_err(|e| format!("Erro ao serializar pedido: {}", e))?;
+
     stream.write_all(&req_json).map_err(|e| format!("Erro ao enviar pedido: {}", e))?;
+    
+    // Avisa o seeder que o nosso pedido terminou
+    let _ = stream.shutdown(std::net::Shutdown::Write);
 
     let mut buffer = Vec::new();
     stream.read_to_end(&mut buffer).map_err(|e| format!("Erro ao ler resposta: {}", e))?;

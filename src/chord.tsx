@@ -50,6 +50,10 @@ export default function ChordDashboard() {
   const [downloading, setDownloading] = useState(false);
   const [downloadMsg, setDownloadMsg] = useState<string | null>(null);
 
+  // -- Estado upload e mensagens
+  const [uploadMsg, setUploadMsg] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false); // Opcional, para feedback visual
+
   const fetchData = async () => {
     try {
       const data = await invoke<NodeInfo>("get_node_info");
@@ -88,15 +92,29 @@ export default function ChordDashboard() {
   // Botão de upload de arquivos
   const handleUpload = async () => {
     try {
+      // Limpa mensagens anteriores
+      setUploadMsg(null); 
+      
       const file = await open({
         multiple: false,
         directory: false,
       });
+      
       if (file) {
-        await invoke("upload_file", { file });
+        setUploading(true);
+        setUploadMsg("Processando e dividindo o arquivo...");
+        
+        // Puxa a string de sucesso do Rust
+        const responseMsg = await invoke<string>("upload_file", { file });
+        
+        // Exibe o sucesso na tela!
+        setUploadMsg(responseMsg);
       }
     } catch (e) {
       console.error("Erro no upload:", e);
+      setUploadMsg(`Erro: ${e}`);
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -140,6 +158,12 @@ export default function ChordDashboard() {
       setSearchResult(meta);
     } catch (e) {
       setSearchError(String(e));
+      
+      // O erro some sozinho depois de 5 segundos
+      setTimeout(() => {
+        setSearchError(null);
+      }, 5000);
+      
     } finally {
       setSearching(false);
     }
@@ -330,7 +354,10 @@ export default function ChordDashboard() {
             <input
               type="text"
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setSearchError(null); // Limpa o erro assim que o usuário digita algo novo
+              }}
               onKeyDown={(e) => e.key === "Enter" && handleSearch()}
               placeholder="Nome exato do arquivo publicado (ex: filme.mp4)"
               className="flex-1 bg-zinc-900 border border-zinc-700 rounded-md px-3 py-2.5 text-sm font-mono text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-purple-500 transition-colors"
@@ -388,6 +415,17 @@ export default function ChordDashboard() {
           {downloadMsg && (
             <div className="mt-3 text-xs font-mono text-zinc-400 bg-zinc-900/50 border border-zinc-800 rounded px-3 py-2 break-all">
               {downloadMsg}
+            </div>
+          )}
+          {/* NOVA: Mensagens de Upload */}
+          {uploadMsg && (
+            <div className={`mt-3 text-xs font-mono rounded px-3 py-2 break-all border ${
+              uploadMsg.includes("Erro") 
+                ? "text-rose-400 bg-rose-500/10 border-rose-500/20" 
+                : "text-blue-400 bg-blue-500/10 border-blue-500/20"
+            }`}>
+              {uploading && <span className="inline-block w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin mr-2 align-middle"></span>}
+              {uploadMsg}
             </div>
           )}
         </div>
