@@ -4,6 +4,7 @@ pub mod network;
 pub mod message;
 mod torrent;
 
+use tauri::Manager;
 use std::sync::{Arc, Mutex};
 use serde::Serialize;
 use node::Node;
@@ -66,9 +67,26 @@ pub fn run() {
     };
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(chord_node)
-        .invoke_handler(tauri::generate_handler![get_node_info, leave_network, join_network, torrent::upload_file])
+        .invoke_handler(tauri::generate_handler![
+            get_node_info,
+            leave_network,
+            join_network,
+            torrent::upload_file,
+            torrent::download_file,
+            torrent::search_file,
+            torrent::download_by_hash
+        ])
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::CloseRequested { .. } => {
+                println!("\n[SISTEMA] Janela fechada no 'X'! Avisando vizinhos antes de encerrar...");
+                let state = window.state::<Arc<Mutex<Node>>>();
+                crate::network::leave_ring(state.inner().clone());
+            }
+            _ => {}
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

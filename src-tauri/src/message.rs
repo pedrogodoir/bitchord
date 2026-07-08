@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use crate::node::NodeInfo;
+use std::collections::HashMap;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum Message {
@@ -11,6 +12,23 @@ pub enum Message {
     PredecessorResponse { node: Option<NodeInfo> },
     Notify { node: NodeInfo },
     Ack,
+    PublishFile { file_id: u8, file_hash: String, owner_address: String },
     UpdateSuccessor { node: NodeInfo },
     UpdatePredecessor { node: Option<NodeInfo> },
+    PutData { key_id: u8, file_hash: String, value: String },
+    GetData { key_id: u8, file_hash: String },
+    DataResponse { value: Option<String> },
+    GetAllFiles { origin_id: u8, files: Vec<String> }, 
+    AllFilesResponse { files: Vec<String> },
+    RequestChunk {
+        file_hash: String,
+        chunk_index: usize,
+    },
+    ChunkData {
+        data: Vec<u8>,
+    },
+    TransferKeys { 
+        // Mapa contendo: file_hash -> JSON do TorrentMeta
+        data: HashMap<String, String> 
+    }
 }

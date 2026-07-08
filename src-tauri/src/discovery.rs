@@ -6,12 +6,34 @@ use crate::node::Node;
 use crate::network::{start_server, stabilize, fix_fingers, send_message}; 
 use sha1::{Digest, Sha1};
 use crate::message::Message;
-
+use std::env;
 const MULTICAST_IP: Ipv4Addr = Ipv4Addr::new(239, 255, 0, 1);
 const PORT: u16 = 5000;
 
+
+fn parse_args() -> Option<String> {
+    let args: Vec<String> = env::args().collect();
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--ip" => {
+                if i + 1 < args.len() {
+                    return Some(args[i + 1].clone());
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    None
+}
+
+
 pub fn main() -> std::io::Result<Arc<Mutex<Node>>> {
-    let my_ip = get_local_ip().unwrap_or_else(|| "127.0.0.1".to_string());
+    let cli_ip = parse_args();
+    let my_ip = get_local_ip(cli_ip).unwrap_or_else(|| "127.0.0.1".to_string());
     let node = find_node(&my_ip)?;
 
     let node_tcp = Arc::clone(&node);
@@ -46,12 +68,21 @@ pub fn main() -> std::io::Result<Arc<Mutex<Node>>> {
     Ok(node)
 }
 
-pub fn get_local_ip() -> Option<String> {
+pub fn get_local_ip(cli_ip: Option<String>) -> Option<String> {
+    // CLI
+    if let Some(ip) = cli_ip {
+        println!("[CONFIG] Usando IP via CLI: {}", ip);
+        return Some(ip);
+    }
+
+    // auto detect
     let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
     socket.connect("8.8.8.8:80").ok()?;
-    
-    let local_addr = socket.local_addr().ok()?;
-    Some(local_addr.ip().to_string())
+
+    let ip = socket.local_addr().ok()?.ip().to_string();
+    println!("[CONFIG] IP detectado automaticamente: {}", ip);
+
+    Some(ip)
 }
 
 /// Aplica o SHA-1 na string do IP e retorna um u8 (0-255)

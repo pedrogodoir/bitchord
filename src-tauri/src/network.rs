@@ -79,6 +79,20 @@ fn handle_connection(mut stream: TcpStream, node: Arc<Mutex<Node>>) {
                 Message::Ack
             }
 
+            Message::PutData { key_id, file_hash, value } => {
+                let mut n = node.lock().unwrap();
+                println!("[STORAGE] Nó {} armazenando chave {} (ID Chord: {})", n.id, file_hash, key_id);
+                n.storage.insert(file_hash, value);
+                Message::Ack
+            }
+
+            Message::GetData { key_id, file_hash } => {
+                let n = node.lock().unwrap();
+                println!("[STORAGE] Nó {} consultando chave {} (ID Chord: {})", n.id, file_hash, key_id);
+                let value = n.storage.get(&file_hash).cloned();
+                Message::DataResponse { value }
+            }
+
             Message::UpdateSuccessor { node: new_succ } => {
                 println!("[LEAVE] Meu sucessor saiu! Meu novo sucessor agora é o ID {}", new_succ.id);
                 let mut n = node.lock().unwrap();
@@ -91,7 +105,84 @@ fn handle_connection(mut stream: TcpStream, node: Arc<Mutex<Node>>) {
                 n.predecessor = new_pred;
                 Message::Ack
             }
+            Message::GetAllFiles { origin_id, mut files } => {
+                let (my_id, succ_addr) = {
+                    let n = node.lock().unwrap();
+                    
+                    // Coloca todos os arquivos deste nó 
+                    for val in n.storage.values() {
+                        files.push(val.clone());
+                    }
+                    (n.id, n.successor.address.clone())
+                };
+
+                // Se deu a volta completa e voltou
+                if my_id == origin_id {
+                    println!("[SEARCH] A varredura deu a volta completa no anel");
+                    Message::AllFilesResponse { files }
+                } else {
+                    // Se não sou eu o dono da busca, passo a caixa pro meu sucessor
+                    println!("[SEARCH] Nó {} adicionou seus arquivos e passou para o sucessor", my_id);
+                    match send_message(&succ_addr, &Message::GetAllFiles { origin_id, files }) {
+                        // Quando a resposta final voltar, eu devolvo pra trás na corrente
+                        Message::AllFilesResponse { files: final_files } => {
+                            Message::AllFilesResponse { files: final_files }
+                        }
+                        _ => Message::Ack, // Fallback em caso de erro
+                    }
+                }
+            }
+            
+            Message::RequestChunk { file_hash, chunk_index } => {
+                println!("[SEEDER] Alguém pediu o bloco {} do arquivo {}", chunk_index, file_hash);
+
+                let file_path = {
+                    let n = node.lock().unwrap();
+                    n.seeding_files.get(&file_hash).cloned()
+                };
+
+                match file_path {
+                    Some(path) => {
+                        use std::io::{Seek, SeekFrom};
+                        match std::fs::File::open(&path) {
+                            Ok(mut f) => {
+                                let offset = (chunk_index * crate::torrent::CHUNK_SIZE) as u64;
+                                if f.seek(SeekFrom::Start(offset)).is_ok() {
+                                    let mut buffer = vec![0u8; crate::torrent::CHUNK_SIZE];
+                                    match f.read(&mut buffer) {
+                                        Ok(bytes_read) => {
+                                            buffer.truncate(bytes_read);
+                                            Message::ChunkData { data: buffer }
+                                        }
+                                        Err(_) => Message::Ack,
+                                    }
+                                } else {
+                                    Message::Ack
+                                }
+                            }
+                            Err(_) => Message::Ack,
+                        }
+                    }
+                    None => {
+                        println!("[SEEDER] Não tenho esse arquivo localmente!");
+                        Message::Ack
+                    }
+                }
+            }
+
+            Message::TransferKeys { data } => {
+                let mut n = node.lock().unwrap();
+                println!("[STORAGE] Nó {} recebendo {} chaves migradas de um vizinho.", n.id, data.len());
+                
+                // Mescla os metadados recebidos no storage local
+                for (key, value) in data {
+                    n.storage.insert(key, value);
+                }
+                Message::Ack
+            }
+
             _ => Message::Ack,
+
         };
 
         let serialized = serde_json::to_vec(&response).unwrap();
@@ -212,27 +303,64 @@ pub fn fix_fingers(node_arc: Arc<Mutex<Node>>) {
 }
 
 pub fn leave_ring(node_arc: Arc<Mutex<Node>>) {
-    let (my_info, pred_opt, succ) = {
+    // Pega os dados vitais antes de começar a desmontar o nó
+    let (my_info, pred_opt, succ, my_storage, files_im_seeding) = {
         let node = node_arc.lock().unwrap();
-        (node.info.clone(), node.predecessor.clone(), node.successor.clone())
+        (
+            node.info.clone(), 
+            node.predecessor.clone(), 
+            node.successor.clone(), 
+            node.storage.clone(),
+            node.seeding_files.clone() // Pega a lista de arquivos que estou semeando
+        )
     };
 
-    // Se eu não estava sozinho no anel, costura as pontas avisando os vizinhos
+    println!("[LEAVE] Iniciando processo de desconexão...");
+
+    // Avisando os donos dos metadados para tirarem meu IP
+    for (file_hash, _) in files_im_seeding {
+        if let Ok(key_id) = u8::from_str_radix(&file_hash[..2], 16) {
+            // Busca o metadado atual lá na DHT
+            if let Ok(mut meta) = crate::torrent::fetch_meta(node_arc.clone(), key_id, file_hash.clone()) {
+                
+                // Remove meu IP da lista
+                meta.seeders.retain(|ip| ip != &my_info.address);
+                
+                // Manda o JSON corrigido de volta para quem cuida dessa chave
+                if let Ok(new_json) = serde_json::to_string(&meta) {
+                    let target_node = crate::network::find_successor_rpc(node_arc.clone(), key_id);
+                    let put_msg = Message::PutData {
+                        key_id,
+                        file_hash: file_hash.clone(),
+                        value: new_json,
+                    };
+                    let _ = send_message(&target_node.address, &put_msg);
+                    println!("[LEAVE] Meu IP foi removido da lista do arquivo {}", file_hash);
+                }
+            }
+        }
+    }
+
+    // Se eu não estava sozinho no anel, faço a migração do storage e costuro as pontas
     if succ.id != my_info.id {
-        println!("[LEAVE] Informando vizinhos sobre a desconexão...");
+        if !my_storage.is_empty() {
+            println!("[LEAVE] Migrando {} chaves para o sucessor ID {}...", my_storage.len(), succ.id);
+            let _ = send_message(&succ.address, &Message::TransferKeys { data: my_storage });
+        }
         
-        // 1. Avisa o Predecessor para pular diretamente para o meu Sucessor
         if let Some(pred) = pred_opt.clone() {
             let _ = send_message(&pred.address, &Message::UpdateSuccessor { node: succ.clone() });
         }
 
-        // 2. Avisa o Sucessor para olhar para o meu Predecessor
         let _ = send_message(&succ.address, &Message::UpdatePredecessor { node: pred_opt });
     }
 
-    // AGORA O PULO DO GATO: Atualiza o próprio estado para isolado (standalone)
+    // Atualiza o próprio estado para isolado (standalone)
     let mut node = node_arc.lock().unwrap();
-    node.successor = node.info.clone(); // Aponta o sucessor para si mesmo
-    node.predecessor = None;            // Limpa o predecessor
+    node.successor = node.info.clone(); 
+    node.predecessor = None;            
+    node.storage.clear();               
+    node.seeding_files.clear(); // Limpa também o dicionário local
+    
     println!("[LEAVE] Desconexão concluída. O nó agora está isolado.");
 }
