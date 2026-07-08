@@ -7,6 +7,7 @@ use std::path::Path;
 // Definindo o tamanho do pedaço (ex: 256 KB)
 pub const CHUNK_SIZE: usize = 256 * 1024; 
 use std::sync::{Arc, Mutex};
+use rayon::prelude::*; // Usado para paralelismo
 use crate::node::Node;
 use crate::network::send_message;
 use crate::message::Message;
@@ -227,42 +228,66 @@ fn download_all_chunks(meta: &TorrentMeta, save_dir: &Path) -> Result<std::path:
         return Err("Nenhum seeder disponível para este arquivo.".to_string());
     }
 
-    let mut final_data: Vec<u8> = Vec::with_capacity(meta.total_size as usize);
+    println!("[DOWNLOAD] Iniciando download PARALELO de {} blocos...", meta.chunk_hashes.len());
 
-    for (index, expected_hash) in meta.chunk_hashes.iter().enumerate() {
-        let mut chunk_ok = false;
+    // O .par_iter() faz o loop rodar em múltiplas threads simultaneamente.
+    // O .collect() no final garante que os blocos voltem exatamente na ordem correta.
+    let chunks_result: Result<Vec<Vec<u8>>, String> = meta.chunk_hashes
+        .par_iter()
+        .enumerate()
+        .map(|(index, expected_hash)| {
+            let num_seeders = meta.seeders.len();
+            
+            // Lógica de Load Balancing (Round-Robin):
+            // O Bloco 0 vai pedir pro Seeder 0. O Bloco 1 pede pro Seeder 1, etc.
+            let start_seeder_idx = index % num_seeders;
 
-        for seeder in &meta.seeders {
-            match request_chunk_from_seeder(seeder, &meta.file_hash, index) {
-                Ok(data) => {
-                    let mut hasher = Sha1::new();
-                    hasher.update(&data);
-                    let got_hash = hex::encode(hasher.finalize());
+            // Tenta baixar do seeder prioritário. Se falhar, tenta os outros da lista.
+            for i in 0..num_seeders {
+                let curr_seeder_idx = (start_seeder_idx + i) % num_seeders;
+                let seeder = &meta.seeders[curr_seeder_idx];
 
-                    if &got_hash == expected_hash {
-                        final_data.extend_from_slice(&data);
-                        chunk_ok = true;
-                        break;
-                    } else {
-                        eprintln!("[DOWNLOAD] Hash do bloco {} não confere no seeder {}, tentando outro...", index, seeder);
+                match request_chunk_from_seeder(seeder, &meta.file_hash, index) {
+                    Ok(data) => {
+                        let mut hasher = Sha1::new();
+                        hasher.update(&data);
+                        let got_hash = hex::encode(hasher.finalize());
+
+                        if &got_hash == expected_hash {
+                            // Sucesso Retorna os bytes do bloco.
+                            return Ok(data);
+                        } else {
+                            eprintln!("[DOWNLOAD] Hash inválido no bloco {} via {}", index, seeder);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[DOWNLOAD] Falha no bloco {} via {}: {}", index, seeder, e);
                     }
                 }
-                Err(e) => eprintln!("[DOWNLOAD] Falha no bloco {} via {}: {}", index, seeder, e),
             }
-        }
 
-        if !chunk_ok {
-            return Err(format!("Não foi possível obter o bloco {} de nenhum seeder.", index));
-        }
-    }
+            // Se rodou todos os seeders e nenhum funcionou, aborta este pedaço.
+            Err(format!("Não foi possível obter o bloco {} de nenhum seeder.", index))
+        })
+        .collect();
 
+    // Se algum bloco falhou, chunks_result será um Err e o download inteiro é abortado.
+    let all_chunks = chunks_result?;
+
+    // Junta o Array de Arrays em um único vetor contínuo de bytes
+    println!("[DOWNLOAD] Todos os blocos baixados! Remontando o arquivo...");
+    let final_data: Vec<u8> = all_chunks.into_iter().flatten().collect();
+
+    // Cria o diretório e salva o arquivo final
     std::fs::create_dir_all(save_dir)
         .map_err(|e| format!("Erro ao criar diretório de destino: {}", e))?;
+    
     let final_path = save_dir.join(&meta.file_name);
     std::fs::write(&final_path, &final_data)
         .map_err(|e| format!("Erro ao salvar arquivo final: {}", e))?;
 
     println!("[DOWNLOAD] Arquivo remontado com sucesso em {:?}", final_path);
+    
     Ok(final_path)
 }
 
